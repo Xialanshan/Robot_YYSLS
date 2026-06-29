@@ -1,0 +1,188 @@
+package qqapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+const (
+	MessageTypeText  = 0
+	MessageTypeMedia = 7
+	FileTypeFile     = 4
+)
+
+type Client struct {
+	appID      string
+	appSecret  string
+	apiBase    string
+	tokenURL   string
+	httpClient *http.Client
+}
+
+type Option func(*Client)
+
+func NewClient(appID, appSecret, apiBase, tokenURL string, opts ...Option) *Client {
+	client := &Client{
+		appID:      appID,
+		appSecret:  appSecret,
+		apiBase:    strings.TrimRight(apiBase, "/"),
+		tokenURL:   tokenURL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	for _, opt := range opts {
+		opt(client)
+	}
+	return client
+}
+
+func WithHTTPClient(httpClient *http.Client) Option {
+	return func(client *Client) {
+		if httpClient != nil {
+			client.httpClient = httpClient
+		}
+	}
+}
+
+type AccessToken struct {
+	Token     string
+	ExpiresIn int
+}
+
+func (c *Client) GetAccessToken(ctx context.Context) (AccessToken, error) {
+	reqBody := map[string]string{
+		"appId":        c.appID,
+		"clientSecret": c.appSecret,
+	}
+
+	var respBody struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in,string"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, c.tokenURL, "", reqBody, &respBody); err != nil {
+		return AccessToken{}, err
+	}
+	if respBody.AccessToken == "" {
+		return AccessToken{}, fmt.Errorf("empty access token response")
+	}
+	return AccessToken{Token: respBody.AccessToken, ExpiresIn: respBody.ExpiresIn}, nil
+}
+
+type SendGroupMessageRequest struct {
+	Content string `json:"content,omitempty"`
+	MsgType int    `json:"msg_type"`
+	Media   *Media `json:"media,omitempty"`
+	EventID string `json:"event_id,omitempty"`
+	MsgID   string `json:"msg_id,omitempty"`
+	MsgSeq  int    `json:"msg_seq,omitempty"`
+}
+
+type Media struct {
+	FileInfo string `json:"file_info"`
+}
+
+type SendMessageResponse struct {
+	ID        string `json:"id"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+func (c *Client) SendGroupText(ctx context.Context, accessToken, groupOpenID, content, eventID, msgID string, msgSeq int) (SendMessageResponse, error) {
+	req := SendGroupMessageRequest{
+		Content: content,
+		MsgType: MessageTypeText,
+		EventID: eventID,
+		MsgID:   msgID,
+		MsgSeq:  msgSeq,
+	}
+	var resp SendMessageResponse
+	url := c.apiBase + "/v2/groups/" + groupOpenID + "/messages"
+	if err := c.doJSON(ctx, http.MethodPost, url, accessToken, req, &resp); err != nil {
+		return SendMessageResponse{}, err
+	}
+	return resp, nil
+}
+
+func (c *Client) SendGroupMedia(ctx context.Context, accessToken, groupOpenID, fileInfo, eventID, msgID string, msgSeq int) (SendMessageResponse, error) {
+	req := SendGroupMessageRequest{
+		MsgType: MessageTypeMedia,
+		Media:   &Media{FileInfo: fileInfo},
+		EventID: eventID,
+		MsgID:   msgID,
+		MsgSeq:  msgSeq,
+	}
+	var resp SendMessageResponse
+	url := c.apiBase + "/v2/groups/" + groupOpenID + "/messages"
+	if err := c.doJSON(ctx, http.MethodPost, url, accessToken, req, &resp); err != nil {
+		return SendMessageResponse{}, err
+	}
+	return resp, nil
+}
+
+type UploadGroupFileRequest struct {
+	FileType int    `json:"file_type"`
+	URL      string `json:"url,omitempty"`
+	FileData string `json:"file_data,omitempty"`
+}
+
+type UploadFileResponse struct {
+	FileUUID string `json:"file_uuid"`
+	FileInfo string `json:"file_info"`
+	TTL      int    `json:"ttl"`
+}
+
+func (c *Client) UploadGroupFile(ctx context.Context, accessToken, groupOpenID, fileURL, fileData string) (UploadFileResponse, error) {
+	req := UploadGroupFileRequest{
+		FileType: FileTypeFile,
+		URL:      fileURL,
+		FileData: fileData,
+	}
+	var resp UploadFileResponse
+	url := c.apiBase + "/v2/groups/" + groupOpenID + "/files"
+	if err := c.doJSON(ctx, http.MethodPost, url, accessToken, req, &resp); err != nil {
+		return UploadFileResponse{}, err
+	}
+	return resp, nil
+}
+
+func (c *Client) UploadGroupLocalFile(ctx context.Context, accessToken, groupOpenID, filePath string) (UploadFileResponse, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return UploadFileResponse{}, err
+	}
+	return c.UploadGroupFile(ctx, accessToken, groupOpenID, "", base64.StdEncoding.EncodeToString(data))
+}
+
+func (c *Client) doJSON(ctx context.Context, method, url, accessToken string, reqBody any, respBody any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if accessToken != "" {
+		req.Header.Set("Authorization", "QQBot "+accessToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("qq api %s %s failed: status %d trace %s", method, url, resp.StatusCode, resp.Header.Get("X-Tps-trace-ID"))
+	}
+	if respBody == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(respBody)
+}
