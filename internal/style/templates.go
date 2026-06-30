@@ -53,7 +53,11 @@ func LoadTemplateConfigs(templateDir string) ([]Config, error) {
 }
 
 func MustLoadDefaultRegistry() (*Registry, error) {
-	configs, err := LoadTemplateConfigs(DefaultTemplateDir)
+	templateDir := os.Getenv("TEMPLATE_DIR")
+	if templateDir == "" {
+		templateDir = DefaultTemplateDir
+	}
+	configs, err := LoadTemplateConfigs(templateDir)
 	if err != nil {
 		return nil, err
 	}
