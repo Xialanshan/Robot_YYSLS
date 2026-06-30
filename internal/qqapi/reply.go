@@ -1,6 +1,9 @@
 package qqapi
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type TokenProvider interface {
 	Token(ctx context.Context) (string, error)
@@ -31,24 +34,34 @@ type APIReplySender struct {
 	Tokens TokenProvider
 }
 
-func (s APIReplySender) SendGroupReply(ctx context.Context, groupOpenID, content, eventID, msgID string, msgSeq int) error {
-	token, err := s.Tokens.Token(ctx)
+func (s APIReplySender) SendGroupReply(_ context.Context, groupOpenID, content, eventID, msgID string, msgSeq int) error {
+	outboundCtx, cancel := outboundContext()
+	defer cancel()
+
+	token, err := s.Tokens.Token(outboundCtx)
 	if err != nil {
 		return err
 	}
-	_, err = s.Client.SendGroupText(ctx, token, groupOpenID, content, eventID, msgID, msgSeq)
+	_, err = s.Client.SendGroupText(outboundCtx, token, groupOpenID, content, eventID, msgID, msgSeq)
 	return err
 }
 
-func (s APIReplySender) SendGroupTemplateFile(ctx context.Context, groupOpenID, templatePath, eventID, msgID string, msgSeq int) error {
-	token, err := s.Tokens.Token(ctx)
+func (s APIReplySender) SendGroupTemplateFile(_ context.Context, groupOpenID, templatePath, eventID, msgID string, msgSeq int) error {
+	outboundCtx, cancel := outboundContext()
+	defer cancel()
+
+	token, err := s.Tokens.Token(outboundCtx)
 	if err != nil {
 		return err
 	}
-	upload, err := s.Client.UploadGroupLocalFile(ctx, token, groupOpenID, templatePath)
+	upload, err := s.Client.UploadGroupLocalFile(outboundCtx, token, groupOpenID, templatePath)
 	if err != nil {
 		return err
 	}
-	_, err = s.Client.SendGroupMedia(ctx, token, groupOpenID, upload.FileInfo, eventID, msgID, msgSeq)
+	_, err = s.Client.SendGroupMedia(outboundCtx, token, groupOpenID, upload.FileInfo, eventID, msgID, msgSeq)
 	return err
+}
+
+func outboundContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
 }

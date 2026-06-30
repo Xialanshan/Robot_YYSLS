@@ -49,7 +49,7 @@ func TestSendGroupText(t *testing.T) {
 		if req.Content != "@user hello" || req.MsgType != MessageTypeText || req.EventID != "event-id" || req.MsgID != "msg-id" || req.MsgSeq != 2 {
 			t.Fatalf("request = %+v", req)
 		}
-		_, _ = w.Write([]byte(`{"id":"message-id","timestamp":123}`))
+		_, _ = w.Write([]byte(`{"id":"message-id","timestamp":"123"}`))
 	}))
 	defer server.Close()
 
@@ -58,7 +58,7 @@ func TestSendGroupText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendGroupText() error = %v", err)
 	}
-	if resp.ID != "message-id" {
+	if resp.ID != "message-id" || resp.Timestamp != 123 {
 		t.Fatalf("response = %+v", resp)
 	}
 }
