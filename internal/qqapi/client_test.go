@@ -63,6 +63,32 @@ func TestSendGroupText(t *testing.T) {
 	}
 }
 
+func TestSendGroupMediaIncludesRequiredContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/groups/group-openid/messages" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		var req SendGroupMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		if req.Content == "" || req.MsgType != MessageTypeMedia || req.Media == nil || req.Media.FileInfo != "file-info" {
+			t.Fatalf("request = %+v", req)
+		}
+		_, _ = w.Write([]byte(`{"id":"message-id","timestamp":123}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("appid", "secret", server.URL, server.URL+"/token", WithHTTPClient(server.Client()))
+	resp, err := client.SendGroupMedia(context.Background(), "token", "group-openid", "file-info", "event-id", "msg-id", 2)
+	if err != nil {
+		t.Fatalf("SendGroupMedia() error = %v", err)
+	}
+	if resp.ID != "message-id" {
+		t.Fatalf("response = %+v", resp)
+	}
+}
+
 func TestUploadGroupFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/groups/group-openid/files" {

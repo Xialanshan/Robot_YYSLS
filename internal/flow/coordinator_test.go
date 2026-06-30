@@ -17,7 +17,7 @@ func TestCoordinatorStartAndSelectStyles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if !strings.Contains(startReply, "@user") || !strings.Contains(startReply, "流派A") {
+	if strings.Contains(startReply, "@user") || !strings.Contains(startReply, "流派A") {
 		t.Fatalf("Start() reply = %q", startReply)
 	}
 
@@ -25,7 +25,7 @@ func TestCoordinatorStartAndSelectStyles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SelectStyles() error = %v", err)
 	}
-	for _, want := range []string{"@user", "流派A", "流派B", "xlsx 模板", "自行填写属性"} {
+	for _, want := range []string{"流派A", "流派B", "xlsx 模板", "自行填写属性"} {
 		if !strings.Contains(selection.Reply, want) {
 			t.Fatalf("SelectStyles() reply missing %q: %q", want, selection.Reply)
 		}

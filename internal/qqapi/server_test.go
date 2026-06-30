@@ -64,7 +64,7 @@ func TestWebhookServerGroupAtMessageStartsFlow(t *testing.T) {
 	if sender.groupOpenID != "group-openid" || sender.eventID != "event-id" || sender.msgID != "msg-id" {
 		t.Fatalf("sender = %+v", sender)
 	}
-	if !strings.Contains(sender.content, "@member-openid") || !strings.Contains(sender.content, "请选择流派") {
+	if strings.Contains(sender.content, "@member-openid") || !strings.Contains(sender.content, "请选择流派") {
 		t.Fatalf("reply content = %q", sender.content)
 	}
 }

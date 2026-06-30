@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -27,11 +28,23 @@ type WebhookServer struct {
 }
 
 type GroupAtMessageData struct {
-	ID           string `json:"id"`
-	GroupOpenID  string `json:"group_openid"`
+	ID           string             `json:"id"`
+	GroupOpenID  string             `json:"group_openid"`
+	Author       GroupMessageAuthor `json:"author"`
+	MemberOpenID string             `json:"member_openid"`
+	Content      string             `json:"content"`
+	EventID      string             `json:"event_id"`
+}
+
+type GroupMessageAuthor struct {
 	MemberOpenID string `json:"member_openid"`
-	Content      string `json:"content"`
-	EventID      string `json:"event_id"`
+}
+
+func (d GroupAtMessageData) MemberID() string {
+	if d.Author.MemberOpenID != "" {
+		return d.Author.MemberOpenID
+	}
+	return d.MemberOpenID
 }
 
 func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +95,9 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 		event.EventID = payload.ID
 	}
 
-	reply, templates, err := s.dispatchGroupText(event)
+	memberID := event.MemberID()
+	reply, templates, err := s.dispatchGroupText(event, memberID)
+	log.Printf("group_at_message group=%q member=%q msg=%q event=%q raw_content=%q reply_empty=%t templates=%d err=%v", event.GroupOpenID, memberID, event.ID, event.EventID, event.Content, reply == "", len(templates), err)
 	if err != nil || reply == "" || s.Sender == nil {
 		return err
 	}
@@ -90,14 +105,17 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 		return err
 	}
 	for i, template := range templates {
+		log.Printf("send_template index=%d name=%q path=%q msg_seq=%d", i, template.Name, template.TemplatePath, i+2)
 		if err := s.Sender.SendGroupTemplateFile(ctx, event.GroupOpenID, template.TemplatePath, event.EventID, event.ID, i+2); err != nil {
+			log.Printf("send_template_failed index=%d name=%q path=%q err=%v", i, template.Name, template.TemplatePath, err)
 			return err
 		}
+		log.Printf("send_template_ok index=%d name=%q path=%q", i, template.Name, template.TemplatePath)
 	}
 	return nil
 }
 
-func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData) (string, []style.Config, error) {
+func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData, memberID string) (string, []style.Config, error) {
 	if s.Flow == nil {
 		return "", nil, nil
 	}
@@ -109,10 +127,10 @@ func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData) (string, []s
 
 	switch {
 	case strings.Contains(text, "计算毕业率"):
-		reply, err := s.Flow.Start(event.GroupOpenID, event.MemberOpenID, now)
+		reply, err := s.Flow.Start(event.GroupOpenID, memberID, now)
 		return reply, nil, err
 	default:
-		selection, err := s.Flow.SelectStyles(event.GroupOpenID, event.MemberOpenID, text, now)
+		selection, err := s.Flow.SelectStyles(event.GroupOpenID, memberID, text, now)
 		return selection.Reply, selection.Styles, err
 	}
 }

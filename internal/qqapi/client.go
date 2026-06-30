@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -110,6 +111,7 @@ func (c *Client) SendGroupText(ctx context.Context, accessToken, groupOpenID, co
 
 func (c *Client) SendGroupMedia(ctx context.Context, accessToken, groupOpenID, fileInfo, eventID, msgID string, msgSeq int) (SendMessageResponse, error) {
 	req := SendGroupMessageRequest{
+		Content: "模板文件",
 		MsgType: MessageTypeMedia,
 		Media:   &Media{FileInfo: fileInfo},
 		EventID: eventID,
@@ -179,7 +181,8 @@ func (c *Client) doJSON(ctx context.Context, method, url, accessToken string, re
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("qq api %s %s failed: status %d trace %s", method, url, resp.StatusCode, resp.Header.Get("X-Tps-trace-ID"))
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("qq api %s %s failed: status %d trace %s body %s", method, url, resp.StatusCode, resp.Header.Get("X-Tps-trace-ID"), strings.TrimSpace(string(data)))
 	}
 	if respBody == nil {
 		return nil
