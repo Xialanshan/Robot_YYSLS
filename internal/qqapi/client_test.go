@@ -98,7 +98,7 @@ func TestUploadGroupFile(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
-		if req.FileType != FileTypeFile || req.URL != "https://example.test/template.xlsx" {
+		if req.FileType != FileTypeFile || req.FileName != "template.xlsx" || req.URL != "https://example.test/template.xlsx" || req.SrvSendMsg == nil || *req.SrvSendMsg {
 			t.Fatalf("request = %+v", req)
 		}
 		_, _ = w.Write([]byte(`{"file_uuid":"file-id","file_info":"file-info","ttl":3600}`))
@@ -106,7 +106,7 @@ func TestUploadGroupFile(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient("appid", "secret", server.URL, server.URL+"/token", WithHTTPClient(server.Client()))
-	resp, err := client.UploadGroupFile(context.Background(), "token", "group-openid", "https://example.test/template.xlsx", "")
+	resp, err := client.UploadGroupFile(context.Background(), "token", "group-openid", "template.xlsx", "https://example.test/template.xlsx", "")
 	if err != nil {
 		t.Fatalf("UploadGroupFile() error = %v", err)
 	}

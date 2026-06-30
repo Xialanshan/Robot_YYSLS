@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -152,9 +153,11 @@ func (c *Client) SendGroupMedia(ctx context.Context, accessToken, groupOpenID, f
 }
 
 type UploadGroupFileRequest struct {
-	FileType int    `json:"file_type"`
-	URL      string `json:"url,omitempty"`
-	FileData string `json:"file_data,omitempty"`
+	FileType   int    `json:"file_type"`
+	FileName   string `json:"file_name,omitempty"`
+	URL        string `json:"url,omitempty"`
+	FileData   string `json:"file_data,omitempty"`
+	SrvSendMsg *bool  `json:"srv_send_msg,omitempty"`
 }
 
 type UploadFileResponse struct {
@@ -163,11 +166,14 @@ type UploadFileResponse struct {
 	TTL      int    `json:"ttl"`
 }
 
-func (c *Client) UploadGroupFile(ctx context.Context, accessToken, groupOpenID, fileURL, fileData string) (UploadFileResponse, error) {
+func (c *Client) UploadGroupFile(ctx context.Context, accessToken, groupOpenID, fileName, fileURL, fileData string) (UploadFileResponse, error) {
+	srvSendMsg := false
 	req := UploadGroupFileRequest{
-		FileType: FileTypeFile,
-		URL:      fileURL,
-		FileData: fileData,
+		FileType:   FileTypeFile,
+		FileName:   fileName,
+		URL:        fileURL,
+		FileData:   fileData,
+		SrvSendMsg: &srvSendMsg,
 	}
 	var resp UploadFileResponse
 	url := c.apiBase + "/v2/groups/" + groupOpenID + "/files"
@@ -182,7 +188,7 @@ func (c *Client) UploadGroupLocalFile(ctx context.Context, accessToken, groupOpe
 	if err != nil {
 		return UploadFileResponse{}, err
 	}
-	return c.UploadGroupFile(ctx, accessToken, groupOpenID, "", base64.StdEncoding.EncodeToString(data))
+	return c.UploadGroupFile(ctx, accessToken, groupOpenID, filepath.Base(filePath), "", base64.StdEncoding.EncodeToString(data))
 }
 
 func (c *Client) doJSON(ctx context.Context, method, url, accessToken string, reqBody any, respBody any) error {
