@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,6 +98,56 @@ func TestWebhookServerGroupAtMessageSendsSelectedTemplates(t *testing.T) {
 	}
 }
 
+func TestWebhookServerContinuesTemplateSendWhenTextReplyFails(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{replyErr: errors.New("reply failed")}
+	server := &WebhookServer{
+		BotSecret: secret,
+		Flow:      testFlow(t),
+		Sender:    sender,
+		Now:       func() time.Time { return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC) },
+	}
+
+	startBody := groupAtPayload(t, "event-id-1", "msg-id-1", "group-openid", "member-openid", "<@bot> 计算毕业率")
+	server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, startBody))
+
+	selectBody := groupAtPayload(t, "event-id-2", "msg-id-2", "group-openid", "member-openid", "<@bot> 牵丝玉")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, signedRequest(t, secret, selectBody))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(sender.templates) != 1 || sender.templates[0] != "template.xlsx" {
+		t.Fatalf("templates = %+v", sender.templates)
+	}
+}
+
+func TestWebhookServerACKsWhenTemplateSendFails(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{templateErr: errors.New("template failed")}
+	server := &WebhookServer{
+		BotSecret: secret,
+		Flow:      testFlow(t),
+		Sender:    sender,
+		Now:       func() time.Time { return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC) },
+	}
+
+	startBody := groupAtPayload(t, "event-id-1", "msg-id-1", "group-openid", "member-openid", "<@bot> 计算毕业率")
+	server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, startBody))
+
+	selectBody := groupAtPayload(t, "event-id-2", "msg-id-2", "group-openid", "member-openid", "<@bot> 牵丝玉")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, signedRequest(t, secret, selectBody))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(sender.templates) != 1 {
+		t.Fatalf("template send attempts = %+v, want 1", sender.templates)
+	}
+}
+
 func TestWebhookServerRejectsInvalidSignature(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/qq/webhook", bytes.NewReader([]byte(`{"op":12}`)))
 	req.Header.Set("X-Signature-Timestamp", "123")
@@ -117,6 +168,8 @@ type fakeReplySender struct {
 	msgID       string
 	msgSeq      int
 	templates   []string
+	replyErr    error
+	templateErr error
 }
 
 func (s *fakeReplySender) SendGroupReply(_ context.Context, groupOpenID, content, eventID, msgID string, msgSeq int) error {
@@ -125,7 +178,7 @@ func (s *fakeReplySender) SendGroupReply(_ context.Context, groupOpenID, content
 	s.eventID = eventID
 	s.msgID = msgID
 	s.msgSeq = msgSeq
-	return nil
+	return s.replyErr
 }
 
 func (s *fakeReplySender) SendGroupTemplateFile(_ context.Context, groupOpenID, templatePath, eventID, msgID string, msgSeq int) error {
@@ -134,7 +187,7 @@ func (s *fakeReplySender) SendGroupTemplateFile(_ context.Context, groupOpenID, 
 	s.msgID = msgID
 	s.msgSeq = msgSeq
 	s.templates = append(s.templates, templatePath)
-	return nil
+	return s.templateErr
 }
 
 func signedRequest(t *testing.T, secret string, body []byte) *http.Request {

@@ -98,17 +98,20 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 	memberID := event.MemberID()
 	reply, templates, err := s.dispatchGroupText(event, memberID)
 	log.Printf("group_at_message group=%q member=%q msg=%q event=%q raw_content=%q reply_empty=%t templates=%d err=%v", event.GroupOpenID, memberID, event.ID, event.EventID, event.Content, reply == "", len(templates), err)
-	if err != nil || reply == "" || s.Sender == nil {
+	if err != nil {
 		return err
 	}
+	if reply == "" || s.Sender == nil {
+		return nil
+	}
 	if err := s.Sender.SendGroupReply(ctx, event.GroupOpenID, reply, event.EventID, event.ID, 1); err != nil {
-		return err
+		log.Printf("send_reply_failed group=%q msg=%q event=%q err=%v", event.GroupOpenID, event.ID, event.EventID, err)
 	}
 	for i, template := range templates {
 		log.Printf("send_template index=%d name=%q path=%q msg_seq=%d", i, template.Name, template.TemplatePath, i+2)
 		if err := s.Sender.SendGroupTemplateFile(ctx, event.GroupOpenID, template.TemplatePath, event.EventID, event.ID, i+2); err != nil {
 			log.Printf("send_template_failed index=%d name=%q path=%q err=%v", i, template.Name, template.TemplatePath, err)
-			return err
+			continue
 		}
 		log.Printf("send_template_ok index=%d name=%q path=%q", i, template.Name, template.TemplatePath)
 	}
