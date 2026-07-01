@@ -1,60 +1,72 @@
 package ocr
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
 
 type PaddleConfig struct {
-	PythonBin  string
-	ScriptPath string
-	Timeout    time.Duration
+	BaseURL string
+	Timeout time.Duration
 }
 
 type PaddleProvider struct {
-	cfg    PaddleConfig
-	runner commandRunner
+	cfg        PaddleConfig
+	httpClient *http.Client
 }
 
-type commandRunner func(ctx context.Context, pythonBin, scriptPath, imagePath string) ([]byte, error)
-
 func NewPaddleProvider(cfg PaddleConfig) *PaddleProvider {
-	if strings.TrimSpace(cfg.PythonBin) == "" {
-		cfg.PythonBin = "python3"
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		cfg.BaseURL = "http://127.0.0.1:18081/ocr"
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 20 * time.Second
 	}
 	return &PaddleProvider{
-		cfg:    cfg,
-		runner: runPaddleCommand,
+		cfg:        cfg,
+		httpClient: &http.Client{Timeout: cfg.Timeout},
 	}
 }
 
 func (p *PaddleProvider) Recognize(ctx context.Context, image ImageInput) (Result, error) {
-	if strings.TrimSpace(p.cfg.ScriptPath) == "" {
-		return Result{}, fmt.Errorf("paddle OCR script path is required")
-	}
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
 	defer cancel()
 
-	imagePath, cleanup, err := p.prepareImage(image)
+	data, err := p.prepareImageData(image)
 	if err != nil {
 		return Result{}, err
 	}
-	defer cleanup()
-
-	output, err := p.runner(ctx, p.cfg.PythonBin, p.cfg.ScriptPath, imagePath)
+	reqBody, err := json.Marshal(paddleOCRRequest{
+		ImageBase64: base64.StdEncoding.EncodeToString(data),
+	})
 	if err != nil {
 		return Result{}, err
 	}
-
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return Result{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return Result{}, fmt.Errorf("call paddle OCR service failed: %w", err)
+	}
+	defer resp.Body.Close()
+	output, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return Result{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Result{}, fmt.Errorf("paddle OCR service HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(output)))
+	}
 	var result Result
 	if err := json.Unmarshal(output, &result); err != nil {
 		return Result{}, fmt.Errorf("parse paddle OCR output failed: %w", err)
@@ -65,34 +77,16 @@ func (p *PaddleProvider) Recognize(ctx context.Context, image ImageInput) (Resul
 	return result, nil
 }
 
-func (p *PaddleProvider) prepareImage(image ImageInput) (string, func(), error) {
-	if image.Path != "" {
-		return image.Path, func() {}, nil
+func (p *PaddleProvider) prepareImageData(image ImageInput) ([]byte, error) {
+	if len(image.Data) > 0 {
+		return image.Data, nil
 	}
-	if len(image.Data) == 0 {
-		return "", nil, fmt.Errorf("image data is required")
+	if image.Path == "" {
+		return nil, fmt.Errorf("image data is required")
 	}
-	tempDir, err := os.MkdirTemp("", "robot_yysls_paddle_*")
-	if err != nil {
-		return "", nil, err
-	}
-	imagePath := filepath.Join(tempDir, "image.png")
-	if err := os.WriteFile(imagePath, image.Data, 0o600); err != nil {
-		_ = os.RemoveAll(tempDir)
-		return "", nil, err
-	}
-	return imagePath, func() { _ = os.RemoveAll(tempDir) }, nil
+	return os.ReadFile(image.Path)
 }
 
-func runPaddleCommand(ctx context.Context, pythonBin, scriptPath, imagePath string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, pythonBin, scriptPath, imagePath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		trimmed := strings.TrimSpace(string(output))
-		if trimmed == "" {
-			return nil, fmt.Errorf("run paddle OCR failed: %w", err)
-		}
-		return nil, fmt.Errorf("run paddle OCR failed: %w: %s", err, trimmed)
-	}
-	return output, nil
+type paddleOCRRequest struct {
+	ImageBase64 string `json:"image_base64"`
 }

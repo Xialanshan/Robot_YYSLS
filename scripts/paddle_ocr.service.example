@@ -1,0 +1,14 @@
+[Unit]
+Description=Robot YYSLS PaddleOCR Service
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/Robot_YYSLS
+ExecStart=/opt/Robot_YYSLS/.venv/bin/python /opt/Robot_YYSLS/scripts/paddle_ocr.py --host 127.0.0.1 --port 18081
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/Robot_YYSLS/paddle_ocr.log
+StandardError=append:/opt/Robot_YYSLS/paddle_ocr.log
+
+[Install]
+WantedBy=multi-user.target

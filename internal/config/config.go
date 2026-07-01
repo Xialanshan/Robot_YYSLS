@@ -26,19 +26,17 @@ type HTTPConfig struct {
 }
 
 type OCRConfig struct {
-	Provider         string
-	PythonBin        string
-	PaddleScriptPath string
-	Timeout          time.Duration
-	Enabled          bool
+	Provider  string
+	PaddleURL string
+	Timeout   time.Duration
+	Enabled   bool
 }
 
 const (
 	defaultQQAPIBase  = "https://api.sgroup.qq.com"
 	defaultQQTokenURL = "https://bots.qq.com/app/getAppAccessToken"
 	defaultOCRTimeout = 20
-	defaultOCRPython  = "python3"
-	defaultOCRScript  = "scripts/paddle_ocr.py"
+	defaultPaddleURL  = "http://127.0.0.1:18081/ocr"
 )
 
 func Load() (Config, error) {
@@ -75,11 +73,10 @@ func loadOCRConfig() OCRConfig {
 		}
 	}
 	return OCRConfig{
-		Provider:         provider,
-		PythonBin:        envOrDefault("OCR_PYTHON_BIN", defaultOCRPython),
-		PaddleScriptPath: envOrDefault("OCR_PADDLE_SCRIPT", defaultOCRScript),
-		Timeout:          time.Duration(timeoutSeconds) * time.Second,
-		Enabled:          provider != "",
+		Provider:  provider,
+		PaddleURL: envOrDefault("OCR_PADDLE_URL", defaultPaddleURL),
+		Timeout:   time.Duration(timeoutSeconds) * time.Second,
+		Enabled:   provider != "",
 	}
 }
 
@@ -90,11 +87,8 @@ func validateOCRConfig(cfg OCRConfig) error {
 	if cfg.Provider != "paddle" {
 		return errors.New("OCR_PROVIDER must be paddle")
 	}
-	if strings.TrimSpace(cfg.PythonBin) == "" {
-		return errors.New("OCR_PYTHON_BIN is required when OCR_PROVIDER=paddle")
-	}
-	if strings.TrimSpace(cfg.PaddleScriptPath) == "" {
-		return errors.New("OCR_PADDLE_SCRIPT is required when OCR_PROVIDER=paddle")
+	if strings.TrimSpace(cfg.PaddleURL) == "" {
+		return errors.New("OCR_PADDLE_URL is required when OCR_PROVIDER=paddle")
 	}
 	return nil
 }

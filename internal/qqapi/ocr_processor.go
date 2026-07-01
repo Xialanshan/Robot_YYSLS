@@ -77,7 +77,7 @@ func (p *OCRProcessor) handleCalculate(ctx context.Context, groupID, userID, tex
 		return OCRHandleResult{Handled: true, Reply: "OCR 计算服务尚未完成初始化，请稍后再试。"}, nil
 	}
 	if p.OCR == nil {
-		return OCRHandleResult{Handled: true, Reply: "OCR 计算尚未启用，请先在服务器配置 OCR_PROVIDER=paddle，并安装本地 PaddleOCR 依赖。"}, nil
+		return OCRHandleResult{Handled: true, Reply: "OCR 计算尚未启用，请先在服务器配置 OCR_PROVIDER=paddle，并启动本地 PaddleOCR 服务。"}, nil
 	}
 	styleNames := parseCommandStyles(text, "OCR计算")
 	if len(styleNames) == 0 {

@@ -32,9 +32,8 @@ func main() {
 	var ocrProvider ocr.Provider
 	if cfg.OCR.Enabled {
 		ocrProvider = ocr.NewPaddleProvider(ocr.PaddleConfig{
-			PythonBin:  cfg.OCR.PythonBin,
-			ScriptPath: cfg.OCR.PaddleScriptPath,
-			Timeout:    cfg.OCR.Timeout,
+			BaseURL: cfg.OCR.PaddleURL,
+			Timeout: cfg.OCR.Timeout,
 		})
 	}
 	server := &qqapi.WebhookServer{

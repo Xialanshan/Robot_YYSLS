@@ -2,26 +2,22 @@ package ocr
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestPaddleProviderRecognize(t *testing.T) {
-	provider := NewPaddleProvider(PaddleConfig{
-		PythonBin:  "python3",
-		ScriptPath: "scripts/paddle_ocr.py",
-	})
-	provider.runner = func(_ context.Context, pythonBin, scriptPath, imagePath string) ([]byte, error) {
-		if pythonBin != "python3" || scriptPath != "scripts/paddle_ocr.py" {
-			t.Fatalf("pythonBin/scriptPath = %q %q", pythonBin, scriptPath)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s", r.Method)
 		}
-		if !strings.HasSuffix(imagePath, ".png") {
-			t.Fatalf("imagePath = %q", imagePath)
-		}
-		return []byte(`{"provider":"paddle","request_id":"req-id","items":[{"text":"会心率","confidence":0.99,"polygon":[{"x":1,"y":2},{"x":3,"y":2},{"x":3,"y":4},{"x":1,"y":4}]}]}`), nil
-	}
+		_, _ = w.Write([]byte(`{"provider":"paddle","request_id":"req-id","items":[{"text":"会心率","confidence":0.99,"polygon":[{"x":1,"y":2},{"x":3,"y":2},{"x":3,"y":4},{"x":1,"y":4}]}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewPaddleProvider(PaddleConfig{BaseURL: server.URL, Timeout: 2 * time.Second})
 
 	got, err := provider.Recognize(context.Background(), ImageInput{Data: []byte("image")})
 	if err != nil {
@@ -35,24 +31,14 @@ func TestPaddleProviderRecognize(t *testing.T) {
 	}
 }
 
-func TestPaddleProviderUsesImagePathDirectly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "image.png")
-	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+func TestPaddleProviderReturnsHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "booting", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
 
-	provider := NewPaddleProvider(PaddleConfig{
-		PythonBin:  "python3",
-		ScriptPath: "scripts/paddle_ocr.py",
-	})
-	provider.runner = func(_ context.Context, _, _, imagePath string) ([]byte, error) {
-		if imagePath != path {
-			t.Fatalf("imagePath = %q, want %q", imagePath, path)
-		}
-		return []byte(`{"items":[]}`), nil
-	}
-
-	if _, err := provider.Recognize(context.Background(), ImageInput{Path: path}); err != nil {
-		t.Fatalf("Recognize() error = %v", err)
+	provider := NewPaddleProvider(PaddleConfig{BaseURL: server.URL, Timeout: 2 * time.Second})
+	if _, err := provider.Recognize(context.Background(), ImageInput{Data: []byte("image")}); err == nil {
+		t.Fatal("Recognize() error = nil, want HTTP error")
 	}
 }

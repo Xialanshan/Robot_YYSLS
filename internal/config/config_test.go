@@ -48,8 +48,7 @@ func TestLoadReadsOCRConfig(t *testing.T) {
 	t.Setenv("QQ_BOT_APP_ID", "1904844772")
 	t.Setenv("QQ_BOT_APP_SECRET", "secret")
 	t.Setenv("OCR_PROVIDER", "paddle")
-	t.Setenv("OCR_PYTHON_BIN", "/usr/bin/python3")
-	t.Setenv("OCR_PADDLE_SCRIPT", "/opt/Robot_YYSLS/scripts/paddle_ocr.py")
+	t.Setenv("OCR_PADDLE_URL", "http://127.0.0.1:18081/ocr")
 	t.Setenv("OCR_TIMEOUT_SECONDS", "15")
 
 	cfg, err := Load()
@@ -59,7 +58,7 @@ func TestLoadReadsOCRConfig(t *testing.T) {
 	if !cfg.OCR.Enabled || cfg.OCR.Provider != "paddle" {
 		t.Fatalf("OCR config = %+v", cfg.OCR)
 	}
-	if cfg.OCR.PythonBin != "/usr/bin/python3" || cfg.OCR.PaddleScriptPath != "/opt/Robot_YYSLS/scripts/paddle_ocr.py" {
+	if cfg.OCR.PaddleURL != "http://127.0.0.1:18081/ocr" {
 		t.Fatalf("OCR config = %+v", cfg.OCR)
 	}
 	if cfg.OCR.Timeout != 15*time.Second {
