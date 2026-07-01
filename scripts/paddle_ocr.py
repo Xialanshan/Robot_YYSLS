@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -18,6 +19,10 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 OCR_ENGINE = None
 
 
+def log_debug(message):
+    print(f"[paddle_ocr] {message}", file=sys.stderr, flush=True)
+
+
 def load_engine():
     global OCR_ENGINE
     if OCR_ENGINE is not None:
@@ -26,10 +31,45 @@ def load_engine():
         from paddleocr import PaddleOCR
     except Exception as exc:
         raise RuntimeError(f"import paddleocr failed: {exc}") from exc
-    try:
-        OCR_ENGINE = PaddleOCR(use_textline_orientation=False, lang="ch")
-    except TypeError:
-        OCR_ENGINE = PaddleOCR(use_angle_cls=False, lang="ch")
+    candidates = [
+        {
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+            "lang": "ch",
+        },
+        {
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_angle_cls": False,
+            "lang": "ch",
+        },
+        {
+            "use_textline_orientation": False,
+            "lang": "ch",
+        },
+        {
+            "use_angle_cls": False,
+            "lang": "ch",
+        },
+        {
+            "lang": "ch",
+        },
+    ]
+    last_error = None
+    for kwargs in candidates:
+        try:
+            OCR_ENGINE = PaddleOCR(**kwargs)
+            return OCR_ENGINE
+        except TypeError as exc:
+            last_error = exc
+            continue
+        except Exception as exc:
+            # Keep trying smaller configurations before giving up.
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise RuntimeError(f"initialize paddleocr failed: {last_error}") from last_error
     return OCR_ENGINE
 
 
@@ -37,6 +77,38 @@ def build_legacy_result(raw_result):
     items = []
     for page in raw_result or []:
         if page is None:
+            continue
+        if isinstance(page, dict):
+            texts = page.get("rec_texts") or page.get("text") or []
+            scores = page.get("rec_scores") or page.get("scores") or []
+            polys = page.get("rec_polys")
+            if polys is None:
+                polys = page.get("dt_polys")
+            if polys is None:
+                polys = []
+            for idx, text in enumerate(texts):
+                raw_polygon = polys[idx] if idx < len(polys) else []
+                polygon = []
+                for point in raw_polygon if raw_polygon is not None else []:
+                    if isinstance(point, dict):
+                        x = point.get("x", 0)
+                        y = point.get("y", 0)
+                    else:
+                        if len(point) < 2:
+                            continue
+                        x, y = point[0], point[1]
+                    polygon.append({"x": int(x), "y": int(y)})
+                confidence = 0.0
+                if idx < len(scores):
+                    try:
+                        confidence = float(scores[idx] or 0.0)
+                    except Exception:
+                        confidence = 0.0
+                items.append({
+                    "text": str(text),
+                    "confidence": confidence,
+                    "polygon": polygon,
+                })
             continue
         for line in page:
             if not line or len(line) < 2:
@@ -72,15 +144,25 @@ def _value_from_result(result, key, default=None):
 def build_predict_result(raw_result):
     items = []
     for page in raw_result or []:
-        texts = _value_from_result(page, "rec_texts", []) or []
-        scores = _value_from_result(page, "rec_scores", []) or []
+        texts = _value_from_result(page, "rec_texts", [])
+        if texts is None:
+            texts = _value_from_result(page, "text", [])
+        if texts is None:
+            texts = []
+        scores = _value_from_result(page, "rec_scores", [])
+        if scores is None:
+            scores = _value_from_result(page, "scores", [])
+        if scores is None:
+            scores = []
         polys = _value_from_result(page, "rec_polys", None)
         if polys is None:
-            polys = _value_from_result(page, "dt_polys", []) or []
+            polys = _value_from_result(page, "dt_polys", [])
+        if polys is None:
+            polys = []
         for idx, text in enumerate(texts):
             raw_polygon = polys[idx] if idx < len(polys) else []
             polygon = []
-            for point in raw_polygon or []:
+            for point in raw_polygon if raw_polygon is not None else []:
                 if isinstance(point, dict):
                     x = point.get("x", 0)
                     y = point.get("y", 0)
@@ -103,6 +185,15 @@ def build_predict_result(raw_result):
     return {"provider": "paddle", "items": items}
 
 
+def has_meaningful_text(result):
+    items = result.get("items", []) if isinstance(result, dict) else []
+    for item in items:
+        text = str(item.get("text", "")).strip()
+        if text and text != "[]":
+            return True
+    return False
+
+
 def run_ocr(engine, image_path):
     last_error = None
     for method_name in ("predict", "ocr"):
@@ -111,14 +202,30 @@ def run_ocr(engine, image_path):
             continue
         try:
             result = method(image_path)
+            log_debug(f"{method_name} raw type={type(result)!r}")
+            log_debug(f"{method_name} raw repr={repr(result)[:2000]}")
             if method_name == "predict":
-                return build_predict_result(result)
-            return build_legacy_result(result)
+                parsed = build_predict_result(result)
+            else:
+                parsed = build_legacy_result(result)
+            log_debug(f"{method_name} parsed items={len(parsed.get('items', []))}")
+            if has_meaningful_text(parsed):
+                return parsed
+            last_error = RuntimeError(f"{method_name} returned empty text results")
+            continue
         except TypeError as exc:
+            log_debug(f"{method_name} type error={exc!r}")
+            last_error = exc
+            continue
+        except Exception as exc:
+            log_debug(f"{method_name} exception={exc!r}")
+            # Some PaddleOCR builds raise generic std::exception for specific
+            # images or operator combinations. Try the next method and keep
+            # the original exception chain available to the caller.
             last_error = exc
             continue
     if last_error is not None:
-        raise last_error
+        raise RuntimeError(f"paddle OCR inference failed: {last_error}") from last_error
     raise RuntimeError("PaddleOCR engine does not provide a usable predict/ocr method")
 
 
@@ -191,7 +298,10 @@ def main():
         load_engine()
     except Exception as exc:
         print(str(exc), file=sys.stderr)
+        traceback.print_exc()
         return 1
+
+    log_debug("engine initialized")
 
     server = ThreadingHTTPServer((args.host, args.port), OCRHandler)
     try:

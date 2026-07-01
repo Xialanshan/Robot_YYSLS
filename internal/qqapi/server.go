@@ -138,7 +138,7 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if payload.Op == OpDispatch && payload.T == EventGroupAtMessageCreate {
-		if err := s.handleGroupAtMessage(r.Context(), payload); err != nil {
+		if err := s.handleGroupAtMessage(payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -147,7 +147,10 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(CallbackACK())
 }
 
-func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payload) error {
+func (s *WebhookServer) handleGroupAtMessage(payload Payload) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
 	var event GroupAtMessageData
 	if err := json.Unmarshal(payload.D, &event); err != nil {
 		return err
