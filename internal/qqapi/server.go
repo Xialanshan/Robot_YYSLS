@@ -209,6 +209,8 @@ func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData, memberID str
 	}
 
 	switch {
+	case strings.Contains(text, "OCR计算"):
+		return "已识别 OCR 计算指令。当前版本已接入 OCR 基础能力，但完整的“截图下载 -> OCR识别 -> 写入模板 -> 计算毕业率”流程还在继续实现中。请暂时继续使用原有模板流程。", nil, nil
 	case strings.Contains(text, "计算毕业率"):
 		reply, err := s.Flow.Start(event.GroupOpenID, memberID, now)
 		return reply, nil, err

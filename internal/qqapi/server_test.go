@@ -114,6 +114,9 @@ func TestWebhookServerOCRCommandDoesNotStartLegacyTemplateFlow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(sender.content, "已识别 OCR 计算指令") {
+		t.Fatalf("OCR command reply = %q", sender.content)
+	}
 	if strings.Contains(sender.content, "请选择流派") || len(sender.templates) != 0 {
 		t.Fatalf("legacy flow unexpectedly triggered: content=%q templates=%+v", sender.content, sender.templates)
 	}
