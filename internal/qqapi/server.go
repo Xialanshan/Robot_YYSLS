@@ -6,12 +6,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"robot_yysls/internal/flow"
-	"robot_yysls/internal/style"
 )
 
 const EventGroupAtMessageCreate = "GROUP_AT_MESSAGE_CREATE"
@@ -24,6 +22,7 @@ type GroupReplySender interface {
 type WebhookServer struct {
 	BotSecret string
 	Flow      *flow.Coordinator
+	OCR       OCRCommandHandler
 	Sender    GroupReplySender
 	Now       func() time.Time
 }
@@ -158,7 +157,7 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 	}
 
 	memberID := event.MemberID()
-	reply, templates, err := s.dispatchGroupText(event, memberID)
+	reply, templates, err := s.dispatchGroupText(ctx, event, memberID)
 	imageRefs := event.ImageReferences()
 	log.Printf("group_at_message group=%q member=%q msg=%q event=%q raw_content=%q images=%d image_summary=%s reply_empty=%t templates=%d err=%v", event.GroupOpenID, memberID, event.ID, event.EventID, event.Content, len(imageRefs), summarizeImageReferences(imageRefs), reply == "", len(templates), err)
 	if err != nil {
@@ -171,12 +170,12 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 		log.Printf("send_reply_failed group=%q msg=%q event=%q err=%v", event.GroupOpenID, event.ID, event.EventID, err)
 	}
 	for i, template := range templates {
-		log.Printf("send_template index=%d name=%q path=%q msg_seq=%d", i, template.Name, template.TemplatePath, i+2)
-		if err := s.Sender.SendGroupTemplateFile(ctx, event.GroupOpenID, template.TemplatePath, event.EventID, event.ID, i+2); err != nil {
-			log.Printf("send_template_failed index=%d name=%q path=%q err=%v", i, template.Name, template.TemplatePath, err)
+		log.Printf("send_template index=%d name=%q path=%q msg_seq=%d", i, template.Name, template.Path, i+2)
+		if err := s.Sender.SendGroupTemplateFile(ctx, event.GroupOpenID, template.Path, event.EventID, event.ID, i+2); err != nil {
+			log.Printf("send_template_failed index=%d name=%q path=%q err=%v", i, template.Name, template.Path, err)
 			continue
 		}
-		log.Printf("send_template_ok index=%d name=%q path=%q", i, template.Name, template.TemplatePath)
+		log.Printf("send_template_ok index=%d name=%q path=%q", i, template.Name, template.Path)
 	}
 	return nil
 }
@@ -199,10 +198,7 @@ func boolString(value bool) string {
 	return "false"
 }
 
-func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData, memberID string) (string, []style.Config, error) {
-	if s.Flow == nil {
-		return "", nil, nil
-	}
+func (s *WebhookServer) dispatchGroupText(ctx context.Context, event GroupAtMessageData, memberID string) (string, []OutboundTemplate, error) {
 	text := normalizeAtContent(event.Content)
 	now := time.Now()
 	if s.Now != nil {
@@ -210,18 +206,28 @@ func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData, memberID str
 	}
 
 	switch {
-	case strings.Contains(text, "OCR计算"):
-		imageRefs := event.ImageReferences()
-		if len(imageRefs) > 0 {
-			return "已识别 OCR 计算指令，已收到 " + strconv.Itoa(len(imageRefs)) + " 张截图。当前版本已确认能够识别 QQ 图片消息，接下来将继续接入“截图下载 -> OCR识别 -> 写入模板 -> 计算毕业率”流程。", nil, nil
+	case strings.Contains(text, "OCR计算"), strings.Contains(text, "发我模板"):
+		if s.OCR == nil {
+			return "OCR 功能尚未启用，请稍后再试。", nil, nil
 		}
-		return "已识别 OCR 计算指令。当前版本已接入 OCR 基础能力，但完整的“截图下载 -> OCR识别 -> 写入模板 -> 计算毕业率”流程还在继续实现中。请在消息中附带截图后重试。", nil, nil
+		result, err := s.OCR.Handle(ctx, event.GroupOpenID, memberID, text, event.ImageReferences(), now)
+		return result.Reply, result.Templates, err
 	case strings.Contains(text, "计算毕业率"):
+		if s.Flow == nil {
+			return "", nil, nil
+		}
 		reply, err := s.Flow.Start(event.GroupOpenID, memberID, now)
 		return reply, nil, err
 	default:
+		if s.Flow == nil {
+			return "", nil, nil
+		}
 		selection, err := s.Flow.SelectStyles(event.GroupOpenID, memberID, text, now)
-		return selection.Reply, selection.Styles, err
+		templates := make([]OutboundTemplate, 0, len(selection.Styles))
+		for _, cfg := range selection.Styles {
+			templates = append(templates, OutboundTemplate{Name: cfg.Name, Path: cfg.TemplatePath})
+		}
+		return selection.Reply, templates, err
 	}
 }
 

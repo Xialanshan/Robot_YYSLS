@@ -6,6 +6,7 @@ import (
 
 	"robot_yysls/internal/config"
 	"robot_yysls/internal/flow"
+	"robot_yysls/internal/ocr"
 	"robot_yysls/internal/qqapi"
 	"robot_yysls/internal/session"
 	"robot_yysls/internal/style"
@@ -23,13 +24,28 @@ func main() {
 	}
 
 	client := qqapi.NewClient(cfg.QQ.AppID, cfg.QQ.AppSecret, cfg.QQ.APIBase, cfg.QQ.TokenURL)
+	store := session.NewMemoryStore()
 	coordinator := &flow.Coordinator{
-		Store:  session.NewMemoryStore(),
+		Store:  store,
 		Styles: styles,
+	}
+	var ocrProvider ocr.Provider
+	if cfg.OCR.Enabled {
+		ocrProvider = ocr.NewTencentProvider(ocr.TencentConfig{
+			SecretID:  cfg.OCR.TencentSecretID,
+			SecretKey: cfg.OCR.TencentSecretKey,
+			Region:    cfg.OCR.TencentRegion,
+			Timeout:   cfg.OCR.Timeout,
+		})
 	}
 	server := &qqapi.WebhookServer{
 		BotSecret: cfg.QQ.AppSecret,
 		Flow:      coordinator,
+		OCR: &qqapi.OCRProcessor{
+			Store:  store,
+			Styles: styles,
+			OCR:    ocrProvider,
+		},
 		Sender: qqapi.APIReplySender{
 			Client: client,
 			Tokens: qqapi.ClientTokenProvider{

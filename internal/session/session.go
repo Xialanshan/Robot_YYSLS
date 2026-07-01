@@ -10,11 +10,13 @@ const (
 )
 
 type Session struct {
-	GroupID   string
-	UserID    string
-	State     State
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	GroupID            string
+	UserID             string
+	State              State
+	GeneratedTemplates map[string]string
+	GeneratedExpiresAt time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 func New(groupID, userID string, now time.Time) *Session {

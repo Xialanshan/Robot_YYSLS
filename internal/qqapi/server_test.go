@@ -107,8 +107,12 @@ func TestWebhookServerOCRCommandDoesNotStartLegacyTemplateFlow(t *testing.T) {
 	(&WebhookServer{
 		BotSecret: secret,
 		Flow:      testFlow(t),
-		Sender:    sender,
-		Now:       func() time.Time { return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC) },
+		OCR: fakeOCRHandler{result: OCRHandleResult{
+			Handled: true,
+			Reply:   "已识别 OCR 计算指令。",
+		}},
+		Sender: sender,
+		Now:    func() time.Time { return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC) },
 	}).ServeHTTP(rec, signedRequest(t, secret, body))
 
 	if rec.Code != http.StatusOK {
@@ -154,7 +158,11 @@ func TestWebhookServerOCRCommandAcknowledgesImages(t *testing.T) {
 	(&WebhookServer{
 		BotSecret: secret,
 		Flow:      testFlow(t),
-		Sender:    sender,
+		OCR: fakeOCRHandler{result: OCRHandleResult{
+			Handled: true,
+			Reply:   "已收到 2 张截图",
+		}},
+		Sender: sender,
 	}).ServeHTTP(rec, signedRequest(t, secret, body))
 
 	if rec.Code != http.StatusOK {
@@ -258,6 +266,15 @@ type fakeReplySender struct {
 	templates   []string
 	replyErr    error
 	templateErr error
+}
+
+type fakeOCRHandler struct {
+	result OCRHandleResult
+	err    error
+}
+
+func (h fakeOCRHandler) Handle(context.Context, string, string, string, []ImageReference, time.Time) (OCRHandleResult, error) {
+	return h.result, h.err
 }
 
 func (s *fakeReplySender) SendGroupReply(_ context.Context, groupOpenID, content, eventID, msgID string, msgSeq int) error {

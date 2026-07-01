@@ -10,13 +10,25 @@ import (
 )
 
 const (
-	FieldOuterAttackMin = "外功攻击最小值"
-	FieldOuterAttackMax = "外功攻击最大值"
-	FieldAttrAttackMin  = "属性攻击最小值"
-	FieldAttrAttackMax  = "属性攻击最大值"
-	FieldPrecisionRate  = "精准率"
-	FieldCritRate       = "会心率"
-	FieldInsightRate    = "会意率"
+	FieldOuterAttackMin       = "外功攻击最小值"
+	FieldOuterAttackMax       = "外功攻击最大值"
+	FieldOuterPenetration     = "外功穿透"
+	FieldAttrAttackMin        = "属性攻击最小值"
+	FieldAttrAttackMax        = "属性攻击最大值"
+	FieldAttrPenetration      = "属性穿透"
+	FieldPrecisionRate        = "精准率"
+	FieldCritRate             = "会心率"
+	FieldInsightRate          = "会意率"
+	FieldDirectCritRate       = "直接会心率"
+	FieldDirectInsightRate    = "直接会意率"
+	FieldCritDamageBonus      = "会心伤害加成"
+	FieldInsightDamageBonus   = "会意伤害加成"
+	FieldAllWeaponBonus       = "全部武学增效"
+	FieldSpecifiedWeaponBonus = "指定武学增效"
+	FieldSpecifiedSkillBonus  = "指定技能增效"
+	FieldBossDamageBonus      = "对首领单位增伤"
+	FieldSingleQishuBonus     = "单体奇术增伤"
+	FieldGroupQishuBonus      = "群体奇术增伤"
 )
 
 var (
@@ -122,12 +134,36 @@ func addParsedValue(attrs ParsedAttributes, label, rawValue string) {
 			return
 		}
 		switch field {
-		case "精准率":
+		case FieldOuterPenetration:
+			attrs[FieldOuterPenetration] = parsed
+		case FieldAttrPenetration:
+			attrs[FieldAttrPenetration] = parsed
+		case FieldPrecisionRate:
 			attrs[FieldPrecisionRate] = parsed
-		case "会心率":
+		case FieldCritRate:
 			attrs[FieldCritRate] = parsed
-		case "会意率":
+		case FieldInsightRate:
 			attrs[FieldInsightRate] = parsed
+		case FieldDirectCritRate:
+			attrs[FieldDirectCritRate] = parsed
+		case FieldDirectInsightRate:
+			attrs[FieldDirectInsightRate] = parsed
+		case FieldCritDamageBonus:
+			attrs[FieldCritDamageBonus] = parsed
+		case FieldInsightDamageBonus:
+			attrs[FieldInsightDamageBonus] = parsed
+		case FieldAllWeaponBonus:
+			attrs[FieldAllWeaponBonus] = parsed
+		case FieldSpecifiedWeaponBonus:
+			attrs[FieldSpecifiedWeaponBonus] = parsed
+		case FieldSpecifiedSkillBonus:
+			attrs[FieldSpecifiedSkillBonus] = parsed
+		case FieldBossDamageBonus:
+			attrs[FieldBossDamageBonus] = parsed
+		case FieldSingleQishuBonus:
+			attrs[FieldSingleQishuBonus] = parsed
+		case FieldGroupQishuBonus:
+			attrs[FieldGroupQishuBonus] = parsed
 		}
 	}
 }
@@ -139,12 +175,36 @@ func normalizeLabel(label string) string {
 		return "外功攻击"
 	case "属性攻击":
 		return "属性攻击"
+	case "外功穿透":
+		return FieldOuterPenetration
+	case "属攻穿透", "属性穿透":
+		return FieldAttrPenetration
 	case "精准率":
-		return "精准率"
+		return FieldPrecisionRate
 	case "会心率":
-		return "会心率"
+		return FieldCritRate
 	case "会意率":
-		return "会意率"
+		return FieldInsightRate
+	case "直接会心率":
+		return FieldDirectCritRate
+	case "直接会意率":
+		return FieldDirectInsightRate
+	case "会心伤害加成":
+		return FieldCritDamageBonus
+	case "会意伤害加成":
+		return FieldInsightDamageBonus
+	case "全部武学增效":
+		return FieldAllWeaponBonus
+	case "指定武学增效":
+		return FieldSpecifiedWeaponBonus
+	case "指定技能增效":
+		return FieldSpecifiedSkillBonus
+	case "对首领单位增伤":
+		return FieldBossDamageBonus
+	case "单体奇术增伤":
+		return FieldSingleQishuBonus
+	case "群体奇术增伤":
+		return FieldGroupQishuBonus
 	default:
 		return ""
 	}
