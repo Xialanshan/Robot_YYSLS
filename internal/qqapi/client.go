@@ -101,17 +101,23 @@ func (t *FlexibleTimestamp) UnmarshalJSON(data []byte) error {
 	if len(data) == 0 || string(data) == "null" {
 		return nil
 	}
-	var value int64
-	var err error
 	if data[0] == '"' {
 		unquoted, unquoteErr := strconv.Unquote(string(data))
 		if unquoteErr != nil {
 			return unquoteErr
 		}
-		value, err = strconv.ParseInt(unquoted, 10, 64)
-	} else {
-		value, err = strconv.ParseInt(string(data), 10, 64)
+		if value, err := strconv.ParseInt(unquoted, 10, 64); err == nil {
+			*t = FlexibleTimestamp(value)
+			return nil
+		}
+		parsedAt, err := time.Parse(time.RFC3339, unquoted)
+		if err != nil {
+			return err
+		}
+		*t = FlexibleTimestamp(parsedAt.Unix())
+		return nil
 	}
+	value, err := strconv.ParseInt(string(data), 10, 64)
 	if err != nil {
 		return err
 	}

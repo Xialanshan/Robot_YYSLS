@@ -122,6 +122,49 @@ func TestWebhookServerOCRCommandDoesNotStartLegacyTemplateFlow(t *testing.T) {
 	}
 }
 
+func TestWebhookServerOCRCommandAcknowledgesImages(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{}
+	data, err := json.Marshal(GroupAtMessageData{
+		ID:          "msg-id",
+		GroupOpenID: "group-openid",
+		Author: GroupMessageAuthor{
+			MemberOpenID: "member-openid",
+		},
+		Content: " <@bot> OCR计算 牵丝玉",
+		Images: []MessageMedia{
+			{URL: "https://example.test/a.png", Filename: "a.png"},
+			{URL: "https://example.test/b.png", Filename: "b.png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	body, err := json.Marshal(Payload{
+		ID: "event-id",
+		Op: OpDispatch,
+		T:  EventGroupAtMessageCreate,
+		D:  data,
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	(&WebhookServer{
+		BotSecret: secret,
+		Flow:      testFlow(t),
+		Sender:    sender,
+	}).ServeHTTP(rec, signedRequest(t, secret, body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(sender.content, "已收到 2 张截图") {
+		t.Fatalf("OCR image reply = %q", sender.content)
+	}
+}
+
 func TestGroupAtMessageImageReferences(t *testing.T) {
 	event := GroupAtMessageData{
 		Attachments: []MessageMedia{

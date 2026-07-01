@@ -63,6 +63,22 @@ func TestSendGroupText(t *testing.T) {
 	}
 }
 
+func TestSendGroupTextAcceptsRFC3339Timestamp(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"message-id","timestamp":"2026-07-01T15:21:46+08:00"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("appid", "secret", server.URL, server.URL+"/token", WithHTTPClient(server.Client()))
+	resp, err := client.SendGroupText(context.Background(), "token", "group-openid", "hello", "event-id", "msg-id", 1)
+	if err != nil {
+		t.Fatalf("SendGroupText() error = %v", err)
+	}
+	if resp.ID != "message-id" || resp.Timestamp == 0 {
+		t.Fatalf("response = %+v", resp)
+	}
+}
+
 func TestSendGroupMediaIncludesRequiredContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/groups/group-openid/messages" {
