@@ -34,10 +34,33 @@ type GroupAtMessageData struct {
 	MemberOpenID string             `json:"member_openid"`
 	Content      string             `json:"content"`
 	EventID      string             `json:"event_id"`
+	Attachments  []MessageMedia     `json:"attachments"`
+	Images       []MessageMedia     `json:"images"`
+	Image        *MessageMedia      `json:"image"`
 }
 
 type GroupMessageAuthor struct {
 	MemberOpenID string `json:"member_openid"`
+}
+
+type MessageMedia struct {
+	ID          string `json:"id,omitempty"`
+	FileID      string `json:"file_id,omitempty"`
+	FileUUID    string `json:"file_uuid,omitempty"`
+	URL         string `json:"url,omitempty"`
+	FileURL     string `json:"file_url,omitempty"`
+	DownloadURL string `json:"download_url,omitempty"`
+	Filename    string `json:"filename,omitempty"`
+	FileName    string `json:"file_name,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+}
+
+type ImageReference struct {
+	URL      string
+	FileID   string
+	Filename string
+	Size     int64
 }
 
 func (d GroupAtMessageData) MemberID() string {
@@ -45,6 +68,44 @@ func (d GroupAtMessageData) MemberID() string {
 		return d.Author.MemberOpenID
 	}
 	return d.MemberOpenID
+}
+
+func (d GroupAtMessageData) ImageReferences() []ImageReference {
+	refs := make([]ImageReference, 0, len(d.Attachments)+len(d.Images)+1)
+	for _, media := range d.Attachments {
+		refs = appendImageReference(refs, media)
+	}
+	for _, media := range d.Images {
+		refs = appendImageReference(refs, media)
+	}
+	if d.Image != nil {
+		refs = appendImageReference(refs, *d.Image)
+	}
+	return refs
+}
+
+func appendImageReference(refs []ImageReference, media MessageMedia) []ImageReference {
+	url := firstNonEmpty(media.URL, media.FileURL, media.DownloadURL)
+	fileID := firstNonEmpty(media.FileID, media.FileUUID, media.ID)
+	filename := firstNonEmpty(media.Filename, media.FileName)
+	if url == "" && fileID == "" && filename == "" {
+		return refs
+	}
+	return append(refs, ImageReference{
+		URL:      url,
+		FileID:   fileID,
+		Filename: filename,
+		Size:     media.Size,
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +158,8 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 
 	memberID := event.MemberID()
 	reply, templates, err := s.dispatchGroupText(event, memberID)
-	log.Printf("group_at_message group=%q member=%q msg=%q event=%q raw_content=%q reply_empty=%t templates=%d err=%v", event.GroupOpenID, memberID, event.ID, event.EventID, event.Content, reply == "", len(templates), err)
+	imageRefs := event.ImageReferences()
+	log.Printf("group_at_message group=%q member=%q msg=%q event=%q raw_content=%q images=%d image_summary=%s reply_empty=%t templates=%d err=%v", event.GroupOpenID, memberID, event.ID, event.EventID, event.Content, len(imageRefs), summarizeImageReferences(imageRefs), reply == "", len(templates), err)
 	if err != nil {
 		return err
 	}
@@ -116,6 +178,24 @@ func (s *WebhookServer) handleGroupAtMessage(ctx context.Context, payload Payloa
 		log.Printf("send_template_ok index=%d name=%q path=%q", i, template.Name, template.TemplatePath)
 	}
 	return nil
+}
+
+func summarizeImageReferences(refs []ImageReference) string {
+	if len(refs) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		parts = append(parts, "{has_url="+boolString(ref.URL != "")+",has_file_id="+boolString(ref.FileID != "")+",filename="+ref.Filename+"}")
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func (s *WebhookServer) dispatchGroupText(event GroupAtMessageData, memberID string) (string, []style.Config, error) {

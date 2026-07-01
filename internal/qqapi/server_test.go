@@ -98,6 +98,48 @@ func TestWebhookServerGroupAtMessageSendsSelectedTemplates(t *testing.T) {
 	}
 }
 
+func TestWebhookServerOCRCommandDoesNotStartLegacyTemplateFlow(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{}
+	body := groupAtPayload(t, "event-id", "msg-id", "group-openid", "member-openid", "<@bot> OCR计算 牵丝玉")
+
+	rec := httptest.NewRecorder()
+	(&WebhookServer{
+		BotSecret: secret,
+		Flow:      testFlow(t),
+		Sender:    sender,
+		Now:       func() time.Time { return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC) },
+	}).ServeHTTP(rec, signedRequest(t, secret, body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(sender.content, "请选择流派") || len(sender.templates) != 0 {
+		t.Fatalf("legacy flow unexpectedly triggered: content=%q templates=%+v", sender.content, sender.templates)
+	}
+}
+
+func TestGroupAtMessageImageReferences(t *testing.T) {
+	event := GroupAtMessageData{
+		Attachments: []MessageMedia{
+			{
+				URL:      "https://example.test/a.png",
+				FileID:   "file-id",
+				Filename: "attrs.png",
+				Size:     1024,
+			},
+		},
+	}
+
+	refs := event.ImageReferences()
+	if len(refs) != 1 {
+		t.Fatalf("refs = %+v, want 1", refs)
+	}
+	if refs[0].URL == "" || refs[0].FileID != "file-id" || refs[0].Filename != "attrs.png" {
+		t.Fatalf("ref = %+v", refs[0])
+	}
+}
+
 func TestWebhookServerContinuesTemplateSendWhenTextReplyFails(t *testing.T) {
 	secret := "secret"
 	sender := &fakeReplySender{replyErr: errors.New("reply failed")}
