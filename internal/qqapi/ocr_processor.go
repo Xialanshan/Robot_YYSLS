@@ -49,6 +49,7 @@ type OCRProcessor struct {
 	HTTPClient *http.Client
 	WorkDir    string
 	TTL        time.Duration
+	AfterFunc  func(time.Duration, func()) *time.Timer
 }
 
 func (p *OCRProcessor) Handle(ctx context.Context, groupID, userID, text string, images []ImageReference, now time.Time) (OCRHandleResult, error) {
@@ -152,6 +153,10 @@ func (p *OCRProcessor) handleCalculate(ctx context.Context, groupID, userID, tex
 	sess.GeneratedExpiresAt = now.Add(p.ttl())
 	sess.UpdatedAt = now
 	p.Store.Save(sess)
+	runDirCopy := runDir
+	p.afterFunc()(p.ttl(), func() {
+		_ = os.RemoveAll(runDirCopy)
+	})
 
 	storedStyles := make([]string, 0, len(generated))
 	for name := range generated {
@@ -448,4 +453,11 @@ func (p *OCRProcessor) ttl() time.Duration {
 		return p.TTL
 	}
 	return defaultGeneratedTemplateTTL
+}
+
+func (p *OCRProcessor) afterFunc() func(time.Duration, func()) *time.Timer {
+	if p.AfterFunc != nil {
+		return p.AfterFunc
+	}
+	return time.AfterFunc
 }
