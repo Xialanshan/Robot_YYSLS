@@ -12,20 +12,20 @@ type ImageInput struct {
 }
 
 type Result struct {
-	Provider  string
-	RequestID string
-	Items     []TextItem
+	Provider  string     `json:"provider"`
+	RequestID string     `json:"request_id"`
+	Items     []TextItem `json:"items"`
 }
 
 type TextItem struct {
-	Text       string
-	Confidence float64
-	Polygon    []Point
+	Text       string  `json:"text"`
+	Confidence float64 `json:"confidence"`
+	Polygon    []Point `json:"polygon"`
 }
 
 type Point struct {
-	X int
-	Y int
+	X int `json:"x"`
+	Y int `json:"y"`
 }
 
 type FakeProvider struct {

@@ -27,9 +27,8 @@ type HTTPConfig struct {
 
 type OCRConfig struct {
 	Provider         string
-	TencentSecretID  string
-	TencentSecretKey string
-	TencentRegion    string
+	PythonBin        string
+	PaddleScriptPath string
 	Timeout          time.Duration
 	Enabled          bool
 }
@@ -37,8 +36,9 @@ type OCRConfig struct {
 const (
 	defaultQQAPIBase  = "https://api.sgroup.qq.com"
 	defaultQQTokenURL = "https://bots.qq.com/app/getAppAccessToken"
-	defaultOCRRegion  = "ap-shanghai"
 	defaultOCRTimeout = 20
+	defaultOCRPython  = "python3"
+	defaultOCRScript  = "scripts/paddle_ocr.py"
 )
 
 func Load() (Config, error) {
@@ -76,9 +76,8 @@ func loadOCRConfig() OCRConfig {
 	}
 	return OCRConfig{
 		Provider:         provider,
-		TencentSecretID:  os.Getenv("TENCENTCLOUD_SECRET_ID"),
-		TencentSecretKey: os.Getenv("TENCENTCLOUD_SECRET_KEY"),
-		TencentRegion:    envOrDefault("TENCENTCLOUD_REGION", defaultOCRRegion),
+		PythonBin:        envOrDefault("OCR_PYTHON_BIN", defaultOCRPython),
+		PaddleScriptPath: envOrDefault("OCR_PADDLE_SCRIPT", defaultOCRScript),
 		Timeout:          time.Duration(timeoutSeconds) * time.Second,
 		Enabled:          provider != "",
 	}
@@ -88,14 +87,14 @@ func validateOCRConfig(cfg OCRConfig) error {
 	if !cfg.Enabled {
 		return nil
 	}
-	if cfg.Provider != "tencent" {
-		return errors.New("OCR_PROVIDER must be tencent")
+	if cfg.Provider != "paddle" {
+		return errors.New("OCR_PROVIDER must be paddle")
 	}
-	if cfg.TencentSecretID == "" {
-		return errors.New("TENCENTCLOUD_SECRET_ID is required when OCR_PROVIDER=tencent")
+	if strings.TrimSpace(cfg.PythonBin) == "" {
+		return errors.New("OCR_PYTHON_BIN is required when OCR_PROVIDER=paddle")
 	}
-	if cfg.TencentSecretKey == "" {
-		return errors.New("TENCENTCLOUD_SECRET_KEY is required when OCR_PROVIDER=tencent")
+	if strings.TrimSpace(cfg.PaddleScriptPath) == "" {
+		return errors.New("OCR_PADDLE_SCRIPT is required when OCR_PROVIDER=paddle")
 	}
 	return nil
 }

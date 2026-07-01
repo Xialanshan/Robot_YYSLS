@@ -47,36 +47,32 @@ func TestLoadReadsEnvironment(t *testing.T) {
 func TestLoadReadsOCRConfig(t *testing.T) {
 	t.Setenv("QQ_BOT_APP_ID", "1904844772")
 	t.Setenv("QQ_BOT_APP_SECRET", "secret")
-	t.Setenv("OCR_PROVIDER", "tencent")
-	t.Setenv("TENCENTCLOUD_SECRET_ID", "sid")
-	t.Setenv("TENCENTCLOUD_SECRET_KEY", "skey")
-	t.Setenv("TENCENTCLOUD_REGION", "ap-guangzhou")
+	t.Setenv("OCR_PROVIDER", "paddle")
+	t.Setenv("OCR_PYTHON_BIN", "/usr/bin/python3")
+	t.Setenv("OCR_PADDLE_SCRIPT", "/opt/Robot_YYSLS/scripts/paddle_ocr.py")
 	t.Setenv("OCR_TIMEOUT_SECONDS", "15")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.OCR.Enabled || cfg.OCR.Provider != "tencent" {
+	if !cfg.OCR.Enabled || cfg.OCR.Provider != "paddle" {
 		t.Fatalf("OCR config = %+v", cfg.OCR)
 	}
-	if cfg.OCR.TencentSecretID != "sid" || cfg.OCR.TencentSecretKey != "skey" {
-		t.Fatalf("OCR credentials = %+v", cfg.OCR)
-	}
-	if cfg.OCR.TencentRegion != "ap-guangzhou" {
-		t.Fatalf("TencentRegion = %q", cfg.OCR.TencentRegion)
+	if cfg.OCR.PythonBin != "/usr/bin/python3" || cfg.OCR.PaddleScriptPath != "/opt/Robot_YYSLS/scripts/paddle_ocr.py" {
+		t.Fatalf("OCR config = %+v", cfg.OCR)
 	}
 	if cfg.OCR.Timeout != 15*time.Second {
 		t.Fatalf("Timeout = %s", cfg.OCR.Timeout)
 	}
 }
 
-func TestLoadRequiresTencentCredentialsWhenOCREnabled(t *testing.T) {
+func TestLoadRejectsUnknownOCRProvider(t *testing.T) {
 	t.Setenv("QQ_BOT_APP_ID", "1904844772")
 	t.Setenv("QQ_BOT_APP_SECRET", "secret")
-	t.Setenv("OCR_PROVIDER", "tencent")
+	t.Setenv("OCR_PROVIDER", "unknown")
 
 	if _, err := Load(); err == nil {
-		t.Fatal("Load() error = nil, want OCR credential error")
+		t.Fatal("Load() error = nil, want OCR provider error")
 	}
 }

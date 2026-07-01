@@ -31,11 +31,10 @@ func main() {
 	}
 	var ocrProvider ocr.Provider
 	if cfg.OCR.Enabled {
-		ocrProvider = ocr.NewTencentProvider(ocr.TencentConfig{
-			SecretID:  cfg.OCR.TencentSecretID,
-			SecretKey: cfg.OCR.TencentSecretKey,
-			Region:    cfg.OCR.TencentRegion,
-			Timeout:   cfg.OCR.Timeout,
+		ocrProvider = ocr.NewPaddleProvider(ocr.PaddleConfig{
+			PythonBin:  cfg.OCR.PythonBin,
+			ScriptPath: cfg.OCR.PaddleScriptPath,
+			Timeout:    cfg.OCR.Timeout,
 		})
 	}
 	server := &qqapi.WebhookServer{
