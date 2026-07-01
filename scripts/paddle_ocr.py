@@ -2,10 +2,17 @@
 import argparse
 import base64
 import json
+import os
 import sys
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# Reduce CPU-runtime incompatibility and memory pressure on small servers.
+os.environ.setdefault("FLAGS_enable_pir_api", "0")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 
 OCR_ENGINE = None
@@ -161,11 +168,14 @@ class OCRHandler(BaseHTTPRequestHandler):
             self.wfile.write(response)
         except Exception as exc:
             message = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
-            self.send_response(500)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(message)))
-            self.end_headers()
-            self.wfile.write(message)
+            try:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(message)))
+                self.end_headers()
+                self.wfile.write(message)
+            except BrokenPipeError:
+                return
 
     def log_message(self, format, *args):
         return
