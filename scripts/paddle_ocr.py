@@ -19,11 +19,14 @@ def load_engine():
         from paddleocr import PaddleOCR
     except Exception as exc:
         raise RuntimeError(f"import paddleocr failed: {exc}") from exc
-    OCR_ENGINE = PaddleOCR(use_angle_cls=False, lang="ch")
+    try:
+        OCR_ENGINE = PaddleOCR(use_textline_orientation=False, lang="ch")
+    except TypeError:
+        OCR_ENGINE = PaddleOCR(use_angle_cls=False, lang="ch")
     return OCR_ENGINE
 
 
-def build_result(raw_result):
+def build_legacy_result(raw_result):
     items = []
     for page in raw_result or []:
         if page is None:
@@ -49,13 +52,75 @@ def build_result(raw_result):
     return {"provider": "paddle", "items": items}
 
 
+def _value_from_result(result, key, default=None):
+    if isinstance(result, dict):
+        return result.get(key, default)
+    if hasattr(result, key):
+        return getattr(result, key)
+    if hasattr(result, "res") and isinstance(result.res, dict):
+        return result.res.get(key, default)
+    return default
+
+
+def build_predict_result(raw_result):
+    items = []
+    for page in raw_result or []:
+        texts = _value_from_result(page, "rec_texts", []) or []
+        scores = _value_from_result(page, "rec_scores", []) or []
+        polys = _value_from_result(page, "rec_polys", None)
+        if polys is None:
+            polys = _value_from_result(page, "dt_polys", []) or []
+        for idx, text in enumerate(texts):
+            raw_polygon = polys[idx] if idx < len(polys) else []
+            polygon = []
+            for point in raw_polygon or []:
+                if isinstance(point, dict):
+                    x = point.get("x", 0)
+                    y = point.get("y", 0)
+                else:
+                    if len(point) < 2:
+                        continue
+                    x, y = point[0], point[1]
+                polygon.append({"x": int(x), "y": int(y)})
+            confidence = 0.0
+            if idx < len(scores):
+                try:
+                    confidence = float(scores[idx] or 0.0)
+                except Exception:
+                    confidence = 0.0
+            items.append({
+                "text": str(text),
+                "confidence": confidence,
+                "polygon": polygon,
+            })
+    return {"provider": "paddle", "items": items}
+
+
+def run_ocr(engine, image_path):
+    last_error = None
+    for method_name in ("predict", "ocr"):
+        method = getattr(engine, method_name, None)
+        if method is None:
+            continue
+        try:
+            result = method(image_path)
+            if method_name == "predict":
+                return build_predict_result(result)
+            return build_legacy_result(result)
+        except TypeError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("PaddleOCR engine does not provide a usable predict/ocr method")
+
+
 def recognize_image_bytes(image_bytes):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
         temp_file.write(image_bytes)
         image_path = temp_file.name
     try:
-        raw_result = load_engine().ocr(image_path, cls=False)
-        return build_result(raw_result)
+        return run_ocr(load_engine(), image_path)
     finally:
         try:
             Path(image_path).unlink(missing_ok=True)
