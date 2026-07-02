@@ -115,6 +115,9 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 		t.Fatalf("session = %+v", sess)
 	}
 	generatedPath := sess.GeneratedTemplates["鸣金虹"]
+	if !strings.Contains(filepath.Base(generatedPath), "鸣金虹-") || !strings.Contains(filepath.Base(generatedPath), "-user.xlsx") {
+		t.Fatalf("generated template name = %q", filepath.Base(generatedPath))
+	}
 	if _, err := os.Stat(generatedPath); err != nil {
 		t.Fatalf("generated template missing: %v", err)
 	}
@@ -124,6 +127,19 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 		t.Fatalf("OpenFile() error = %v", err)
 	}
 	defer file.Close()
+	calcProps, err := file.GetCalcProps()
+	if err != nil {
+		t.Fatalf("GetCalcProps() error = %v", err)
+	}
+	if calcProps.CalcMode == nil || *calcProps.CalcMode != "auto" {
+		t.Fatalf("CalcMode = %+v, want auto", calcProps.CalcMode)
+	}
+	if calcProps.FullCalcOnLoad == nil || !*calcProps.FullCalcOnLoad {
+		t.Fatalf("FullCalcOnLoad = %+v, want true", calcProps.FullCalcOnLoad)
+	}
+	if calcProps.ForceFullCalc == nil || !*calcProps.ForceFullCalc {
+		t.Fatalf("ForceFullCalc = %+v, want true", calcProps.ForceFullCalc)
+	}
 	assertCell(t, file, "期望", "B2", "100")
 	assertCell(t, file, "期望", "C2", "200")
 	assertCell(t, file, "期望", "D2", "5.5")

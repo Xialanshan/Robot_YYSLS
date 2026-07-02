@@ -298,6 +298,51 @@ func TestWebhookServerSendTemplateDeduplicatesSameEvent(t *testing.T) {
 	}
 }
 
+func TestWebhookServerLimitsOCRConcurrencyToTwo(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{}
+	handler := &slotBlockingOCRHandler{
+		result:  OCRHandleResult{Handled: true, Reply: "鸣金虹：95.2%"},
+		started: make(chan struct{}, 3),
+		release: make(chan struct{}, 3),
+	}
+	server := &WebhookServer{
+		BotSecret:        secret,
+		Flow:             testFlow(t),
+		OCR:              handler,
+		Sender:           sender,
+		OCRMaxConcurrent: 2,
+	}
+
+	for i := 0; i < 3; i++ {
+		body := groupAtPayloadWithImages(t, "event-id-"+string(rune('a'+i)), "msg-id-"+string(rune('a'+i)), "group-openid", "member-openid", "<@bot> OCR计算 牵丝玉")
+		go server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, body))
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-handler.started:
+		case <-time.After(time.Second):
+			t.Fatal("expected two OCR tasks to start")
+		}
+	}
+	select {
+	case <-handler.started:
+		t.Fatal("third OCR task should wait for a slot")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	handler.release <- struct{}{}
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("third OCR task did not start after a slot was released")
+	}
+
+	handler.release <- struct{}{}
+	handler.release <- struct{}{}
+}
+
 func TestGroupAtMessageImageReferences(t *testing.T) {
 	event := GroupAtMessageData{
 		Attachments: []MessageMedia{
@@ -413,6 +458,13 @@ type countingOCRHandler struct {
 	calls  atomic.Int32
 }
 
+type slotBlockingOCRHandler struct {
+	result  OCRHandleResult
+	err     error
+	started chan struct{}
+	release chan struct{}
+}
+
 type replyRecord struct {
 	content string
 	eventID string
@@ -432,6 +484,12 @@ func (h *blockingOCRHandler) Handle(context.Context, string, string, string, []I
 
 func (h *countingOCRHandler) Handle(context.Context, string, string, string, []ImageReference, time.Time) (OCRHandleResult, error) {
 	h.calls.Add(1)
+	return h.result, h.err
+}
+
+func (h *slotBlockingOCRHandler) Handle(context.Context, string, string, string, []ImageReference, time.Time) (OCRHandleResult, error) {
+	h.started <- struct{}{}
+	<-h.release
 	return h.result, h.err
 }
 

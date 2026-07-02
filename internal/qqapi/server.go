@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"robot_yysls/internal/flow"
@@ -22,14 +23,17 @@ type GroupReplySender interface {
 }
 
 type WebhookServer struct {
-	BotSecret string
-	Flow      *flow.Coordinator
-	OCR       OCRCommandHandler
-	Sender    GroupReplySender
-	Now       func() time.Time
+	BotSecret        string
+	Flow             *flow.Coordinator
+	OCR              OCRCommandHandler
+	Sender           GroupReplySender
+	Now              func() time.Time
+	OCRMaxConcurrent int
 
 	mu              sync.Mutex
 	ocrEventHandled map[string]time.Time
+	ocrSlots        chan struct{}
+	ocrWaiting      atomic.Int32
 }
 
 type GroupAtMessageData struct {
@@ -241,9 +245,20 @@ func (s *WebhookServer) runOCRTask(event GroupAtMessageData, memberID, text stri
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	s.ocrWaiting.Add(1)
+	// #region debug-point
+	log.Printf("debug_ocr_task_waiting_slot group=%q member=%q msg=%q event=%q waiting=%d", event.GroupOpenID, memberID, event.ID, event.EventID, s.ocrWaiting.Load())
+	// #endregion debug-point
+	s.acquireOCRSlot()
+	s.ocrWaiting.Add(-1)
+	defer s.releaseOCRSlot()
+
 	now := s.currentTime()
 	imageRefs := event.ImageReferences()
 
+	// #region debug-point
+	log.Printf("debug_ocr_task_acquired_slot group=%q member=%q msg=%q event=%q active=%d waiting=%d", event.GroupOpenID, memberID, event.ID, event.EventID, s.currentOCRActive(), s.currentOCRWaiting())
+	// #endregion debug-point
 	// #region debug-point
 	log.Printf("debug_ocr_task_started group=%q member=%q msg=%q event=%q images=%d", event.GroupOpenID, memberID, event.ID, event.EventID, len(imageRefs))
 	// #endregion debug-point
@@ -306,6 +321,38 @@ func (s *WebhookServer) currentTime() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+func (s *WebhookServer) acquireOCRSlot() {
+	s.ensureOCRSlots()
+	s.ocrSlots <- struct{}{}
+}
+
+func (s *WebhookServer) releaseOCRSlot() {
+	s.ensureOCRSlots()
+	<-s.ocrSlots
+}
+
+func (s *WebhookServer) ensureOCRSlots() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ocrSlots != nil {
+		return
+	}
+	limit := s.OCRMaxConcurrent
+	if limit <= 0 {
+		limit = 2
+	}
+	s.ocrSlots = make(chan struct{}, limit)
+}
+
+func (s *WebhookServer) currentOCRActive() int {
+	s.ensureOCRSlots()
+	return len(s.ocrSlots)
+}
+
+func (s *WebhookServer) currentOCRWaiting() int32 {
+	return s.ocrWaiting.Load()
 }
 
 func summarizeImageReferences(refs []ImageReference) string {

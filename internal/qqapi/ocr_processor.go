@@ -134,7 +134,7 @@ func (p *OCRProcessor) handleCalculate(ctx context.Context, groupID, userID, tex
 	lines := make([]string, 0, len(styles)+4)
 	lines = append(lines, "已完成 OCR 计算：")
 	for _, cfg := range styles {
-		path, value, err := p.generateWorkbook(runDir, cfg, attrs, now)
+		path, value, err := p.generateWorkbook(runDir, cfg, attrs, userID, now)
 		if err != nil {
 			lines = append(lines, cfg.Name+"：计算失败（"+err.Error()+"）")
 			continue
@@ -247,17 +247,17 @@ func (p *OCRProcessor) downloadImage(ctx context.Context, image ImageReference) 
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs attrparse.ParsedAttributes, now time.Time) (string, string, error) {
-	dstPath := filepath.Join(runDir, filepath.Base(cfg.TemplatePath))
+func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs attrparse.ParsedAttributes, userLabel string, now time.Time) (string, string, error) {
+	initialPath := filepath.Join(runDir, filepath.Base(cfg.TemplatePath))
 	src, err := os.ReadFile(cfg.TemplatePath)
 	if err != nil {
 		return "", "", err
 	}
-	if err := os.WriteFile(dstPath, src, 0o644); err != nil {
+	if err := os.WriteFile(initialPath, src, 0o644); err != nil {
 		return "", "", err
 	}
 
-	file, err := excelize.OpenFile(dstPath)
+	file, err := excelize.OpenFile(initialPath)
 	if err != nil {
 		return "", "", err
 	}
@@ -276,12 +276,15 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	// #region debug-point
 	resultFormula, _ := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
 	debugTemplateValues := summarizeDebugTemplateValues(cfg, templateValues)
-	log.Printf("debug_ocr_generate_before_save style=%q src=%q dst=%q result_cell=%s!%s result_formula=%q template_values=%s", cfg.Name, cfg.TemplatePath, dstPath, cfg.Result.Sheet, cfg.Result.Cell, resultFormula, debugTemplateValues)
+	log.Printf("debug_ocr_generate_before_save style=%q src=%q dst=%q result_cell=%s!%s result_formula=%q template_values=%s", cfg.Name, cfg.TemplatePath, initialPath, cfg.Result.Sheet, cfg.Result.Cell, resultFormula, debugTemplateValues)
 	// #endregion debug-point
+	if err := p.prepareWorkbookForRecalc(file); err != nil {
+		return "", "", err
+	}
 	if err := file.Save(); err != nil {
 		return "", "", err
 	}
-	if err := os.Chtimes(dstPath, now, now); err != nil {
+	if err := os.Chtimes(initialPath, now, now); err != nil {
 		return "", "", err
 	}
 	result, err := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
@@ -293,9 +296,18 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	}
 	// #region debug-point
 	debugPersistedCells := summarizePersistedTemplateCells(file, cfg)
-	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q persisted_cells=%s", cfg.Name, dstPath, strings.TrimSpace(result), debugPersistedCells)
+	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q persisted_cells=%s", cfg.Name, initialPath, strings.TrimSpace(result), debugPersistedCells)
 	// #endregion debug-point
-	return dstPath, strings.TrimSpace(result), nil
+	finalPath := generatedTemplatePath(runDir, cfg.Name, strings.TrimSpace(result), userLabel, cfg.TemplatePath)
+	if finalPath != initialPath {
+		if err := os.Rename(initialPath, finalPath); err != nil {
+			return "", "", err
+		}
+		if err := os.Chtimes(finalPath, now, now); err != nil {
+			return "", "", err
+		}
+	}
+	return finalPath, strings.TrimSpace(result), nil
 }
 
 func buildTemplateValues(cfg style.Config, attrs attrparse.ParsedAttributes) map[string]float64 {
@@ -444,6 +456,45 @@ func removeGeneratedFiles(files map[string]string) error {
 		_ = os.Remove(dir)
 	}
 	return firstErr
+}
+
+func (p *OCRProcessor) prepareWorkbookForRecalc(file *excelize.File) error {
+	if err := file.UpdateLinkedValue(); err != nil {
+		return err
+	}
+	auto := "auto"
+	trueValue := true
+	falseValue := false
+	return file.SetCalcProps(&excelize.CalcPropsOptions{
+		CalcMode:       &auto,
+		FullCalcOnLoad: &trueValue,
+		CalcOnSave:     &trueValue,
+		ForceFullCalc:  &trueValue,
+		CalcCompleted:  &falseValue,
+	})
+}
+
+func generatedTemplatePath(runDir, styleName, graduationRate, userLabel, templatePath string) string {
+	ext := filepath.Ext(templatePath)
+	if ext == "" {
+		ext = ".xlsx"
+	}
+	rateLabel := sanitizeRateForFileName(graduationRate)
+	userLabel = strings.TrimSpace(userLabel)
+	if userLabel == "" {
+		userLabel = "unknown-user"
+	}
+	base := sanitizeFileName(styleName + "-" + rateLabel + "-" + userLabel)
+	return filepath.Join(runDir, base+ext)
+}
+
+func sanitizeRateForFileName(rate string) string {
+	rate = strings.TrimSpace(rate)
+	if rate == "" {
+		return "unknown-rate"
+	}
+	replacer := strings.NewReplacer("%", "pct", ".", "_", " ", "_")
+	return replacer.Replace(rate)
 }
 
 func summarizeDebugTemplateValues(cfg style.Config, values map[string]float64) string {
