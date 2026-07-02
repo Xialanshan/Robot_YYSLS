@@ -226,8 +226,8 @@ func TestWebhookServerOCRCommandReturnsBeforeOCRFinishes(t *testing.T) {
 		replies := sender.repliesSnapshot()
 		if len(replies) >= 2 {
 			last := replies[len(replies)-1]
-			if last.eventID != "" || last.msgID != "" || last.msgSeq != 0 {
-				t.Fatalf("async result should not reuse original reply identifiers: %+v", last)
+				if last.eventID != "event-id" || last.msgID != "msg-id" || last.msgSeq != 2 {
+					t.Fatalf("async result should continue the original reply chain: %+v", last)
 			}
 			if !strings.Contains(last.content, "鸣金虹：95.2%") {
 				t.Fatalf("async result reply = %q", last.content)

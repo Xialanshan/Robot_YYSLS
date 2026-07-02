@@ -256,7 +256,7 @@ func (s *WebhookServer) runOCRTask(event GroupAtMessageData, memberID, text stri
 	// #region debug-point
 	log.Printf("debug_ocr_task_reply_attempt group=%q msg=%q event=%q content_preview=%q", event.GroupOpenID, event.ID, event.EventID, truncateForDebug(reply, 120))
 	// #endregion debug-point
-	if err := s.Sender.SendGroupReply(context.Background(), event.GroupOpenID, reply, "", "", 0); err != nil {
+	if err := s.Sender.SendGroupReply(context.Background(), event.GroupOpenID, reply, event.EventID, event.ID, 2); err != nil {
 		log.Printf("send_reply_failed group=%q msg=%q event=%q err=%v", event.GroupOpenID, event.ID, event.EventID, err)
 	}
 }
