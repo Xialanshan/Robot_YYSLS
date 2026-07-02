@@ -31,26 +31,53 @@ def load_engine():
         from paddleocr import PaddleOCR
     except Exception as exc:
         raise RuntimeError(f"import paddleocr failed: {exc}") from exc
+    base_kwargs = {
+        "lang": "ch",
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+        "use_textline_orientation": False,
+    }
     candidates = [
         {
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
-            "use_textline_orientation": False,
-            "lang": "ch",
+            **base_kwargs,
+            "text_detection_model_name": "PP-OCRv6_small_det",
+            "text_recognition_model_name": "PP-OCRv6_small_rec",
         },
         {
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
+            **base_kwargs,
+            "det_model_name": "PP-OCRv6_small_det",
+            "rec_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            **base_kwargs,
             "use_angle_cls": False,
-            "lang": "ch",
+            "text_detection_model_name": "PP-OCRv6_small_det",
+            "text_recognition_model_name": "PP-OCRv6_small_rec",
         },
         {
-            "use_textline_orientation": False,
-            "lang": "ch",
-        },
-        {
+            **base_kwargs,
             "use_angle_cls": False,
+            "det_model_name": "PP-OCRv6_small_det",
+            "rec_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            **base_kwargs,
+        },
+        {
             "lang": "ch",
+            "use_angle_cls": False,
+            "text_detection_model_name": "PP-OCRv6_small_det",
+            "text_recognition_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            "lang": "ch",
+            "use_angle_cls": False,
+            "det_model_name": "PP-OCRv6_small_det",
+            "rec_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            "lang": "ch",
+            "use_angle_cls": False,
         },
         {
             "lang": "ch",
@@ -60,12 +87,15 @@ def load_engine():
     for kwargs in candidates:
         try:
             OCR_ENGINE = PaddleOCR(**kwargs)
+            log_debug(f"engine init ok kwargs={kwargs!r}")
             return OCR_ENGINE
         except TypeError as exc:
+            log_debug(f"engine init type error kwargs={kwargs!r} err={exc!r}")
             last_error = exc
             continue
         except Exception as exc:
             # Keep trying smaller configurations before giving up.
+            log_debug(f"engine init error kwargs={kwargs!r} err={exc!r}")
             last_error = exc
             continue
     if last_error is not None:
