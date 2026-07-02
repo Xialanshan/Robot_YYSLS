@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -288,6 +289,7 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 		return "", "", err
 	}
 	result, err := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	resultCalcErr := err
 	if err != nil {
 		result, err = file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
 		if err != nil {
@@ -296,7 +298,10 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	}
 	// #region debug-point
 	debugPersistedCells := summarizePersistedTemplateCells(file, cfg)
-	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q persisted_cells=%s", cfg.Name, initialPath, strings.TrimSpace(result), debugPersistedCells)
+	resultFormulaAfterSave, _ := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
+	resultRawAfterSave, _ := file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	dependencySummary := summarizeFormulaDependencies(file, cfg.Result.Sheet, resultFormulaAfterSave)
+	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q result_raw=%q result_calc_err=%v result_formula=%q dependencies=%s persisted_cells=%s", cfg.Name, initialPath, strings.TrimSpace(result), resultRawAfterSave, resultCalcErr, resultFormulaAfterSave, dependencySummary, debugPersistedCells)
 	// #endregion debug-point
 	finalPath := generatedTemplatePath(runDir, cfg.Name, strings.TrimSpace(result), userLabel, cfg.TemplatePath)
 	if finalPath != initialPath {
@@ -307,6 +312,17 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 			return "", "", err
 		}
 	}
+	// #region debug-point
+	if reopened, openErr := excelize.OpenFile(finalPath); openErr == nil {
+		reopenedFormula, _ := reopened.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
+		reopenedRaw, _ := reopened.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+		reopenedCalc, reopenedCalcErr := reopened.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+		log.Printf("debug_ocr_generate_reopen_read style=%q path=%q result_calc=%q result_raw=%q result_calc_err=%v result_formula=%q dependencies=%s", cfg.Name, finalPath, strings.TrimSpace(reopenedCalc), reopenedRaw, reopenedCalcErr, reopenedFormula, summarizeFormulaDependencies(reopened, cfg.Result.Sheet, reopenedFormula))
+		_ = reopened.Close()
+	} else {
+		log.Printf("debug_ocr_generate_reopen_read_failed style=%q path=%q err=%v", cfg.Name, finalPath, openErr)
+	}
+	// #endregion debug-point
 	return finalPath, strings.TrimSpace(result), nil
 }
 
@@ -551,6 +567,28 @@ func sortedDebugTemplateKeys(values map[string]float64) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+var formulaCellRefPattern = regexp.MustCompile(`\b[A-Z]{1,3}[0-9]{1,7}\b`)
+
+func summarizeFormulaDependencies(file *excelize.File, sheet, formula string) string {
+	refs := formulaCellRefPattern.FindAllString(formula, -1)
+	if len(refs) == 0 {
+		return "{}"
+	}
+	seen := make(map[string]struct{}, len(refs))
+	parts := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		raw, rawErr := file.GetCellValue(sheet, ref)
+		calc, calcErr := file.CalcCellValue(sheet, ref)
+		parts = append(parts, fmt.Sprintf("%s={raw:%q,rawErr:%v,calc:%q,calcErr:%v}", ref, raw, rawErr, calc, calcErr))
+	}
+	sort.Strings(parts)
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func (p *OCRProcessor) cleanupExpired(now time.Time) error {
