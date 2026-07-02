@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,7 +58,6 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 
 	store := session.NewMemoryStore()
 	workDir := t.TempDir()
-	var recalcCalls atomic.Int32
 	processor := &OCRProcessor{
 		Store:  store,
 		Styles: registry,
@@ -102,10 +100,6 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 		HTTPClient: imageServer.Client(),
 		WorkDir:    workDir,
 		TTL:        time.Hour,
-		RecalculateWorkbook: func(context.Context, string) error {
-			recalcCalls.Add(1)
-			return nil
-		},
 	}
 
 	result, err := processor.Handle(context.Background(), "group", "user", "OCR计算 鸣金虹", []ImageReference{{URL: imageServer.URL + "/1.png"}}, now)
@@ -121,14 +115,14 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 		t.Fatalf("session = %+v", sess)
 	}
 	generatedPath := sess.GeneratedTemplates["鸣金虹"]
-	if !strings.Contains(filepath.Base(generatedPath), "鸣金虹-") || strings.Contains(filepath.Base(generatedPath), "-user.xlsx") {
+	if filepath.Base(generatedPath) != "鸣金虹-384_9518.xlsx" {
 		t.Fatalf("generated template name = %q", filepath.Base(generatedPath))
-	}
-	if recalcCalls.Load() != 1 {
-		t.Fatalf("recalc calls = %d, want 1", recalcCalls.Load())
 	}
 	if _, err := os.Stat(generatedPath); err != nil {
 		t.Fatalf("generated template missing: %v", err)
+	}
+	if !strings.Contains(result.Reply, "鸣金虹：") {
+		t.Fatalf("result reply = %q", result.Reply)
 	}
 
 	file, err := excelize.OpenFile(generatedPath)
@@ -136,18 +130,12 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 		t.Fatalf("OpenFile() error = %v", err)
 	}
 	defer file.Close()
-	calcProps, err := file.GetCalcProps()
+	resultFormula, err := file.GetCellFormula("期望", "I16")
 	if err != nil {
-		t.Fatalf("GetCalcProps() error = %v", err)
+		t.Fatalf("GetCellFormula(I16) error = %v", err)
 	}
-	if calcProps.CalcMode == nil || *calcProps.CalcMode != "auto" {
-		t.Fatalf("CalcMode = %+v, want auto", calcProps.CalcMode)
-	}
-	if calcProps.FullCalcOnLoad == nil || !*calcProps.FullCalcOnLoad {
-		t.Fatalf("FullCalcOnLoad = %+v, want true", calcProps.FullCalcOnLoad)
-	}
-	if calcProps.ForceFullCalc == nil || !*calcProps.ForceFullCalc {
-		t.Fatalf("ForceFullCalc = %+v, want true", calcProps.ForceFullCalc)
+	if resultFormula == "" {
+		t.Fatal("expected result formula to remain in generated workbook")
 	}
 	assertCell(t, file, "期望", "B2", "100")
 	assertCell(t, file, "期望", "C2", "200")
