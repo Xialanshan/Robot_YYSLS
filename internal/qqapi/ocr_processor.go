@@ -141,7 +141,7 @@ func (p *OCRProcessor) handleCalculate(ctx context.Context, groupID, userID, tex
 		}
 		log.Printf("ocr_generated_workbook group=%q user=%q style=%q path=%q graduation_rate=%q", groupID, userID, cfg.Name, path, value)
 		generated[cfg.Name] = path
-		lines = append(lines, cfg.Name+"："+formatGraduationRate(value))
+		lines = append(lines, cfg.Name+"："+formatGraduationRate())
 	}
 	if len(generated) == 0 {
 		return OCRHandleResult{Handled: true, Reply: strings.Join(lines, "\n")}, nil
@@ -291,7 +291,7 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 		}
 	}
 	result = strings.TrimSpace(result)
-	finalPath := generatedTemplatePath(runDir, cfg.Name, result, cfg.TemplatePath)
+	finalPath := generatedTemplatePath(runDir, cfg.Name, "", cfg.TemplatePath)
 	if finalPath != initialPath {
 		if err := os.Rename(initialPath, finalPath); err != nil {
 			return "", "", err
@@ -428,7 +428,11 @@ func generatedTemplatePath(runDir, styleName, graduationRate, templatePath strin
 	if ext == "" {
 		ext = ".xlsx"
 	}
-	base := sanitizeFileName(styleName + "-" + sanitizeRateForFileName(graduationRate))
+	baseName := styleName
+	if trimmed := strings.TrimSpace(graduationRate); trimmed != "" {
+		baseName += "-" + sanitizeRateForFileName(trimmed)
+	}
+	base := sanitizeFileName(baseName)
 	return filepath.Join(runDir, base+ext)
 }
 
@@ -441,12 +445,8 @@ func sanitizeRateForFileName(rate string) string {
 	return replacer.Replace(rate)
 }
 
-func formatGraduationRate(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "计算完成，但未能读到毕业率单元格结果"
-	}
-	return trimmed
+func formatGraduationRate() string {
+	return "模板已生成，请以模板内最终毕业率为准"
 }
 
 func applyWorkbookRecalcOnOpen(file *excelize.File) error {
@@ -491,24 +491,34 @@ func logWorkbookDebugSnapshot(phase, path string, cfg style.Config, file *exceli
 	if file == nil {
 		return
 	}
-	formula, formulaErr := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
-	getValue, getErr := file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
-	calcValue, calcErr := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
 	calcProps, calcPropsErr := file.GetCalcProps()
+	resultSnapshot := workbookCellDebugSnapshot(file, cfg.Result.Sheet, cfg.Result.Cell)
+	dependencySnapshot := workbookCellDebugSnapshot(file, cfg.Result.Sheet, "I12")
 	log.Printf(
-		"debug_ocr_workbook_snapshot phase=%q path=%q style=%q result_cell=%q formula=%q formula_err=%v get_value=%q get_err=%v calc_value=%q calc_err=%v calc_props=%+v calc_props_err=%v",
+		"debug_ocr_workbook_snapshot phase=%q path=%q style=%q result=%s dependency_i12=%s calc_props=%+v calc_props_err=%v",
 		phase,
 		path,
 		cfg.Name,
-		cfg.Result.Sheet+"!"+cfg.Result.Cell,
+		resultSnapshot,
+		dependencySnapshot,
+		calcProps,
+		calcPropsErr,
+	)
+}
+
+func workbookCellDebugSnapshot(file *excelize.File, sheet, cell string) string {
+	formula, formulaErr := file.GetCellFormula(sheet, cell)
+	getValue, getErr := file.GetCellValue(sheet, cell)
+	calcValue, calcErr := file.CalcCellValue(sheet, cell)
+	return fmt.Sprintf(
+		"{cell=%q formula=%q formula_err=%v get_value=%q get_err=%v calc_value=%q calc_err=%v}",
+		sheet+"!"+cell,
 		strings.TrimSpace(formula),
 		formulaErr,
 		strings.TrimSpace(getValue),
 		getErr,
 		strings.TrimSpace(calcValue),
 		calcErr,
-		calcProps,
-		calcPropsErr,
 	)
 }
 

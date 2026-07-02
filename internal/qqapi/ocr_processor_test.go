@@ -115,13 +115,13 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 		t.Fatalf("session = %+v", sess)
 	}
 	generatedPath := sess.GeneratedTemplates["鸣金虹"]
-	if filepath.Base(generatedPath) != "鸣金虹-384_9518.xlsx" {
+	if filepath.Base(generatedPath) != "鸣金虹.xlsx" {
 		t.Fatalf("generated template name = %q", filepath.Base(generatedPath))
 	}
 	if _, err := os.Stat(generatedPath); err != nil {
 		t.Fatalf("generated template missing: %v", err)
 	}
-	if !strings.Contains(result.Reply, "鸣金虹：") {
+	if !strings.Contains(result.Reply, "鸣金虹：模板已生成，请以模板内最终毕业率为准") {
 		t.Fatalf("result reply = %q", result.Reply)
 	}
 
