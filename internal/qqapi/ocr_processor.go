@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -138,6 +139,9 @@ func (p *OCRProcessor) handleCalculate(ctx context.Context, groupID, userID, tex
 			lines = append(lines, cfg.Name+"：计算失败（"+err.Error()+"）")
 			continue
 		}
+		// #region debug-point
+		log.Printf("debug_ocr_generated_workbook group=%q user=%q style=%q path=%q graduation_rate=%q", groupID, userID, cfg.Name, path, value)
+		// #endregion debug-point
 		generated[cfg.Name] = path
 		lines = append(lines, cfg.Name+"："+formatGraduationRate(value))
 	}
@@ -209,6 +213,11 @@ func (p *OCRProcessor) handleSendTemplates(groupID, userID, text string, now tim
 	if len(templates) == 0 {
 		return OCRHandleResult{Handled: true, Reply: "未找到对应流派的 OCR 模板副本，请确认流派名称，或重新执行 OCR 计算。"}, nil
 	}
+	// #region debug-point
+	for _, template := range templates {
+		log.Printf("debug_ocr_send_template_selected group=%q user=%q style=%q path=%q", groupID, userID, template.Name, template.Path)
+	}
+	// #endregion debug-point
 	var builder strings.Builder
 	builder.WriteString("已为你发送填写后的模板副本：")
 	for _, template := range templates {
@@ -254,7 +263,8 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	}
 	defer file.Close()
 
-	for fieldName, value := range buildTemplateValues(cfg, attrs) {
+	templateValues := buildTemplateValues(cfg, attrs)
+	for fieldName, value := range templateValues {
 		field, ok := cfg.Fields[fieldName]
 		if !ok {
 			continue
@@ -263,6 +273,11 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 			return "", "", err
 		}
 	}
+	// #region debug-point
+	resultFormula, _ := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
+	debugTemplateValues := summarizeDebugTemplateValues(cfg, templateValues)
+	log.Printf("debug_ocr_generate_before_save style=%q src=%q dst=%q result_cell=%s!%s result_formula=%q template_values=%s", cfg.Name, cfg.TemplatePath, dstPath, cfg.Result.Sheet, cfg.Result.Cell, resultFormula, debugTemplateValues)
+	// #endregion debug-point
 	if err := file.Save(); err != nil {
 		return "", "", err
 	}
@@ -276,6 +291,10 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 			return "", "", err
 		}
 	}
+	// #region debug-point
+	debugPersistedCells := summarizePersistedTemplateCells(file, cfg)
+	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q persisted_cells=%s", cfg.Name, dstPath, strings.TrimSpace(result), debugPersistedCells)
+	// #endregion debug-point
 	return dstPath, strings.TrimSpace(result), nil
 }
 
@@ -425,6 +444,62 @@ func removeGeneratedFiles(files map[string]string) error {
 		_ = os.Remove(dir)
 	}
 	return firstErr
+}
+
+func summarizeDebugTemplateValues(cfg style.Config, values map[string]float64) string {
+	if len(values) == 0 {
+		return "{}"
+	}
+	parts := make([]string, 0, len(values))
+	for _, key := range sortedDebugTemplateKeys(values) {
+		field := cfg.Fields[key]
+		parts = append(parts, fmt.Sprintf("%s=%g@%s!%s", key, values[key], field.Cell.Sheet, field.Cell.Cell))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func summarizePersistedTemplateCells(file *excelize.File, cfg style.Config) string {
+	keys := []string{
+		"精准率", "会心率", "会意率", "直接会心率", "直接会意率",
+		"会心伤害加成", "会意伤害加成", "全武增", "首领增", "单体奇术增", "群体奇术增",
+	}
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		field, ok := cfg.Fields[key]
+		if !ok {
+			continue
+		}
+		value, err := file.GetCellValue(field.Cell.Sheet, field.Cell.Cell)
+		if err != nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", key, value))
+	}
+	for name := range cfg.Fields {
+		if !isWeaponBonusField(name) {
+			continue
+		}
+		field := cfg.Fields[name]
+		value, err := file.GetCellValue(field.Cell.Sheet, field.Cell.Cell)
+		if err != nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", name, value))
+	}
+	if len(parts) == 0 {
+		return "{}"
+	}
+	sort.Strings(parts)
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func sortedDebugTemplateKeys(values map[string]float64) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (p *OCRProcessor) cleanupExpired(now time.Time) error {
