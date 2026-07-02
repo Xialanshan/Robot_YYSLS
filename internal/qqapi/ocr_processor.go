@@ -272,6 +272,9 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	}
 	logWorkbookFieldWrites(initialPath, cfg, templateValues)
 	logWorkbookDebugSnapshot("after_write_before_save", initialPath, cfg, file)
+	if err := applyWorkbookRecalcOnOpen(file); err != nil {
+		return "", "", err
+	}
 	if err := file.Save(); err != nil {
 		return "", "", err
 	}
@@ -446,6 +449,22 @@ func formatGraduationRate(value string) string {
 	return trimmed
 }
 
+func applyWorkbookRecalcOnOpen(file *excelize.File) error {
+	if file == nil {
+		return nil
+	}
+	auto := "auto"
+	recalc := true
+	notCompleted := false
+	return file.SetCalcProps(&excelize.CalcPropsOptions{
+		CalcMode:       &auto,
+		CalcOnSave:     &recalc,
+		FullCalcOnLoad: &recalc,
+		ForceFullCalc:  &recalc,
+		CalcCompleted:  &notCompleted,
+	})
+}
+
 func logWorkbookFieldWrites(path string, cfg style.Config, values map[string]float64) {
 	samples := make([]string, 0, 8)
 	for fieldName, value := range values {
@@ -475,8 +494,9 @@ func logWorkbookDebugSnapshot(phase, path string, cfg style.Config, file *exceli
 	formula, formulaErr := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
 	getValue, getErr := file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
 	calcValue, calcErr := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	calcProps, calcPropsErr := file.GetCalcProps()
 	log.Printf(
-		"debug_ocr_workbook_snapshot phase=%q path=%q style=%q result_cell=%q formula=%q formula_err=%v get_value=%q get_err=%v calc_value=%q calc_err=%v",
+		"debug_ocr_workbook_snapshot phase=%q path=%q style=%q result_cell=%q formula=%q formula_err=%v get_value=%q get_err=%v calc_value=%q calc_err=%v calc_props=%+v calc_props_err=%v",
 		phase,
 		path,
 		cfg.Name,
@@ -487,6 +507,8 @@ func logWorkbookDebugSnapshot(phase, path string, cfg style.Config, file *exceli
 		getErr,
 		strings.TrimSpace(calcValue),
 		calcErr,
+		calcProps,
+		calcPropsErr,
 	)
 }
 

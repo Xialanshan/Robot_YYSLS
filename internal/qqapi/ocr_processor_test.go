@@ -137,6 +137,25 @@ func TestOCRProcessorCalculateAndFetchTemplates(t *testing.T) {
 	if resultFormula == "" {
 		t.Fatal("expected result formula to remain in generated workbook")
 	}
+	calcProps, err := file.GetCalcProps()
+	if err != nil {
+		t.Fatalf("GetCalcProps() error = %v", err)
+	}
+	if calcProps.CalcMode == nil || *calcProps.CalcMode != "auto" {
+		t.Fatalf("calc mode = %+v", calcProps.CalcMode)
+	}
+	if calcProps.FullCalcOnLoad == nil || !*calcProps.FullCalcOnLoad {
+		t.Fatalf("fullCalcOnLoad = %+v", calcProps.FullCalcOnLoad)
+	}
+	if calcProps.ForceFullCalc == nil || !*calcProps.ForceFullCalc {
+		t.Fatalf("forceFullCalc = %+v", calcProps.ForceFullCalc)
+	}
+	if calcProps.CalcOnSave == nil || !*calcProps.CalcOnSave {
+		t.Fatalf("calcOnSave = %+v", calcProps.CalcOnSave)
+	}
+	if calcProps.CalcCompleted != nil && *calcProps.CalcCompleted {
+		t.Fatalf("calcCompleted = %+v", calcProps.CalcCompleted)
+	}
 	assertCell(t, file, "期望", "B2", "100")
 	assertCell(t, file, "期望", "C2", "200")
 	assertCell(t, file, "期望", "D2", "5.5")
