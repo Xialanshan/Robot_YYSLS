@@ -258,6 +258,7 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 		return "", "", err
 	}
 	defer file.Close()
+	logWorkbookDebugSnapshot("after_copy_open", initialPath, cfg, file)
 
 	templateValues := buildTemplateValues(cfg, attrs)
 	for fieldName, value := range templateValues {
@@ -269,12 +270,16 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 			return "", "", err
 		}
 	}
+	logWorkbookFieldWrites(initialPath, cfg, templateValues)
+	logWorkbookDebugSnapshot("after_write_before_save", initialPath, cfg, file)
 	if err := file.Save(); err != nil {
 		return "", "", err
 	}
 	if err := os.Chtimes(initialPath, now, now); err != nil {
 		return "", "", err
 	}
+	logWorkbookDebugSnapshot("after_save_in_memory", initialPath, cfg, file)
+	logWorkbookDebugSnapshotFromDisk("after_save_reopen", initialPath, cfg)
 	result, err := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
 	if err != nil {
 		result, err = file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
@@ -439,6 +444,60 @@ func formatGraduationRate(value string) string {
 		return "计算完成，但未能读到毕业率单元格结果"
 	}
 	return trimmed
+}
+
+func logWorkbookFieldWrites(path string, cfg style.Config, values map[string]float64) {
+	samples := make([]string, 0, 8)
+	for fieldName, value := range values {
+		field, ok := cfg.Fields[fieldName]
+		if !ok {
+			continue
+		}
+		samples = append(samples, fmt.Sprintf("%s=%s!%s:%g", fieldName, field.Cell.Sheet, field.Cell.Cell, value))
+	}
+	sort.Strings(samples)
+	if len(samples) > 8 {
+		samples = samples[:8]
+	}
+	log.Printf(
+		"debug_ocr_workbook_field_writes path=%q style=%q field_count=%d samples=%q",
+		path,
+		cfg.Name,
+		len(values),
+		samples,
+	)
+}
+
+func logWorkbookDebugSnapshot(phase, path string, cfg style.Config, file *excelize.File) {
+	if file == nil {
+		return
+	}
+	formula, formulaErr := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
+	getValue, getErr := file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	calcValue, calcErr := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	log.Printf(
+		"debug_ocr_workbook_snapshot phase=%q path=%q style=%q result_cell=%q formula=%q formula_err=%v get_value=%q get_err=%v calc_value=%q calc_err=%v",
+		phase,
+		path,
+		cfg.Name,
+		cfg.Result.Sheet+"!"+cfg.Result.Cell,
+		strings.TrimSpace(formula),
+		formulaErr,
+		strings.TrimSpace(getValue),
+		getErr,
+		strings.TrimSpace(calcValue),
+		calcErr,
+	)
+}
+
+func logWorkbookDebugSnapshotFromDisk(phase, path string, cfg style.Config) {
+	file, err := excelize.OpenFile(path)
+	if err != nil {
+		log.Printf("debug_ocr_workbook_snapshot_open_failed phase=%q path=%q style=%q err=%v", phase, path, cfg.Name, err)
+		return
+	}
+	defer file.Close()
+	logWorkbookDebugSnapshot(phase, path, cfg, file)
 }
 
 func removeGeneratedFiles(files map[string]string) error {
