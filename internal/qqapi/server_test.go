@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,7 +120,7 @@ func TestWebhookServerOCRCommandDoesNotStartLegacyTemplateFlow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(sender.content, "已识别 OCR 计算指令") {
+	if !strings.Contains(sender.content, "请在同一条 @ 消息里附带截图") {
 		t.Fatalf("OCR command reply = %q", sender.content)
 	}
 	if strings.Contains(sender.content, "请选择流派") || len(sender.templates) != 0 {
@@ -168,9 +170,105 @@ func TestWebhookServerOCRCommandAcknowledgesImages(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(sender.content, "已收到 2 张截图") {
-		t.Fatalf("OCR image reply = %q", sender.content)
+	replies := sender.repliesSnapshot()
+	if len(replies) == 0 || !strings.Contains(replies[0].content, "已收到截图，正在识别并计算，请稍候。") {
+		t.Fatalf("OCR image replies = %+v", replies)
 	}
+}
+
+func TestWebhookServerOCRCommandReturnsBeforeOCRFinishes(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{}
+	handler := &blockingOCRHandler{
+		result: OCRHandleResult{Handled: true, Reply: "鸣金虹：95.2%"},
+		start:  make(chan struct{}, 1),
+		wait:   make(chan struct{}),
+	}
+	body := groupAtPayloadWithImages(t, "event-id", "msg-id", "group-openid", "member-openid", "<@bot> OCR计算 牵丝玉")
+
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		(&WebhookServer{
+			BotSecret: secret,
+			Flow:      testFlow(t),
+			OCR:       handler,
+			Sender:    sender,
+		}).ServeHTTP(rec, signedRequest(t, secret, body))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ServeHTTP did not return quickly")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(sender.content, "已收到截图，正在识别并计算，请稍候。") {
+		t.Fatalf("immediate reply = %q", sender.content)
+	}
+	if len(sender.repliesSnapshot()) != 1 {
+		t.Fatalf("reply count = %d, want 1 before OCR completion", len(sender.repliesSnapshot()))
+	}
+
+	select {
+	case <-handler.start:
+	case <-time.After(time.Second):
+		t.Fatal("OCR handler was not started asynchronously")
+	}
+
+	close(handler.wait)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		replies := sender.repliesSnapshot()
+		if len(replies) >= 2 {
+			last := replies[len(replies)-1]
+			if last.eventID != "" || last.msgID != "" || last.msgSeq != 0 {
+				t.Fatalf("async result should not reuse original reply identifiers: %+v", last)
+			}
+			if !strings.Contains(last.content, "鸣金虹：95.2%") {
+				t.Fatalf("async result reply = %q", last.content)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("async OCR result reply was not sent")
+}
+
+func TestWebhookServerOCRCommandDeduplicatesSameEvent(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{}
+	handler := &countingOCRHandler{
+		result: OCRHandleResult{Handled: true, Reply: "鸣金虹：95.2%"},
+	}
+	server := &WebhookServer{
+		BotSecret: secret,
+		Flow:      testFlow(t),
+		OCR:       handler,
+		Sender:    sender,
+	}
+	body := groupAtPayloadWithImages(t, "event-id", "msg-id", "group-openid", "member-openid", "<@bot> OCR计算 牵丝玉")
+
+	server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, body))
+	server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, body))
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if handler.calls.Load() == 1 && len(sender.repliesSnapshot()) >= 2 {
+			replies := sender.repliesSnapshot()
+			if len(replies) != 2 {
+				t.Fatalf("replies = %+v, want exactly 2", replies)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("OCR calls = %d replies = %+v", handler.calls.Load(), sender.repliesSnapshot())
 }
 
 func TestGroupAtMessageImageReferences(t *testing.T) {
@@ -258,6 +356,7 @@ func TestWebhookServerRejectsInvalidSignature(t *testing.T) {
 }
 
 type fakeReplySender struct {
+	mu          sync.Mutex
 	groupOpenID string
 	content     string
 	eventID     string
@@ -266,6 +365,7 @@ type fakeReplySender struct {
 	templates   []string
 	replyErr    error
 	templateErr error
+	replies     []replyRecord
 }
 
 type fakeOCRHandler struct {
@@ -273,26 +373,75 @@ type fakeOCRHandler struct {
 	err    error
 }
 
+type blockingOCRHandler struct {
+	result OCRHandleResult
+	err    error
+	start  chan struct{}
+	wait   chan struct{}
+}
+
+type countingOCRHandler struct {
+	result OCRHandleResult
+	err    error
+	calls  atomic.Int32
+}
+
+type replyRecord struct {
+	content string
+	eventID string
+	msgID   string
+	msgSeq  int
+}
+
 func (h fakeOCRHandler) Handle(context.Context, string, string, string, []ImageReference, time.Time) (OCRHandleResult, error) {
 	return h.result, h.err
 }
 
+func (h *blockingOCRHandler) Handle(context.Context, string, string, string, []ImageReference, time.Time) (OCRHandleResult, error) {
+	h.start <- struct{}{}
+	<-h.wait
+	return h.result, h.err
+}
+
+func (h *countingOCRHandler) Handle(context.Context, string, string, string, []ImageReference, time.Time) (OCRHandleResult, error) {
+	h.calls.Add(1)
+	return h.result, h.err
+}
+
 func (s *fakeReplySender) SendGroupReply(_ context.Context, groupOpenID, content, eventID, msgID string, msgSeq int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.groupOpenID = groupOpenID
 	s.content = content
 	s.eventID = eventID
 	s.msgID = msgID
 	s.msgSeq = msgSeq
+	s.replies = append(s.replies, replyRecord{
+		content: content,
+		eventID: eventID,
+		msgID:   msgID,
+		msgSeq:  msgSeq,
+	})
 	return s.replyErr
 }
 
 func (s *fakeReplySender) SendGroupTemplateFile(_ context.Context, groupOpenID, templatePath, eventID, msgID string, msgSeq int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.groupOpenID = groupOpenID
 	s.eventID = eventID
 	s.msgID = msgID
 	s.msgSeq = msgSeq
 	s.templates = append(s.templates, templatePath)
 	return s.templateErr
+}
+
+func (s *fakeReplySender) repliesSnapshot() []replyRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]replyRecord, len(s.replies))
+	copy(out, s.replies)
+	return out
 }
 
 func signedRequest(t *testing.T, secret string, body []byte) *http.Request {
@@ -322,6 +471,34 @@ func groupAtPayload(t *testing.T, eventID, msgID, groupOpenID, memberOpenID, con
 		GroupOpenID:  groupOpenID,
 		MemberOpenID: memberOpenID,
 		Content:      content,
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	body, err := json.Marshal(Payload{
+		ID: eventID,
+		Op: OpDispatch,
+		T:  EventGroupAtMessageCreate,
+		D:  data,
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	return body
+}
+
+func groupAtPayloadWithImages(t *testing.T, eventID, msgID, groupOpenID, memberOpenID, content string) []byte {
+	t.Helper()
+
+	data, err := json.Marshal(GroupAtMessageData{
+		ID:           msgID,
+		GroupOpenID:  groupOpenID,
+		MemberOpenID: memberOpenID,
+		Content:      content,
+		Images: []MessageMedia{
+			{URL: "https://example.test/a.png", Filename: "a.png"},
+			{URL: "https://example.test/b.png", Filename: "b.png"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)

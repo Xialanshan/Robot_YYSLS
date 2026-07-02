@@ -79,6 +79,32 @@ func TestSendGroupTextAcceptsRFC3339Timestamp(t *testing.T) {
 	}
 }
 
+func TestSendGroupTextAllowsActivePushWithoutReplyIdentifiers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req SendGroupMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		if req.Content != "hello" || req.MsgType != MessageTypeText {
+			t.Fatalf("request = %+v", req)
+		}
+		if req.EventID != "" || req.MsgID != "" || req.MsgSeq != 0 {
+			t.Fatalf("request should omit reply identifiers: %+v", req)
+		}
+		_, _ = w.Write([]byte(`{"id":"message-id","timestamp":"123"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("appid", "secret", server.URL, server.URL+"/token", WithHTTPClient(server.Client()))
+	resp, err := client.SendGroupText(context.Background(), "token", "group-openid", "hello", "", "", 0)
+	if err != nil {
+		t.Fatalf("SendGroupText() error = %v", err)
+	}
+	if resp.ID != "message-id" || resp.Timestamp != 123 {
+		t.Fatalf("response = %+v", resp)
+	}
+}
+
 func TestSendGroupMediaIncludesRequiredContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/groups/group-openid/messages" {
