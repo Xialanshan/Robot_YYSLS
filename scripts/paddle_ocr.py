@@ -40,11 +40,27 @@ def load_engine():
     candidates = [
         {
             **base_kwargs,
+            "engine": "onnxruntime",
             "text_detection_model_name": "PP-OCRv6_small_det",
             "text_recognition_model_name": "PP-OCRv6_small_rec",
         },
         {
             **base_kwargs,
+            "engine": "onnxruntime",
+            "det_model_name": "PP-OCRv6_small_det",
+            "rec_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            **base_kwargs,
+            "engine": "onnxruntime",
+            "use_angle_cls": False,
+            "text_detection_model_name": "PP-OCRv6_small_det",
+            "text_recognition_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            **base_kwargs,
+            "engine": "onnxruntime",
+            "use_angle_cls": False,
             "det_model_name": "PP-OCRv6_small_det",
             "rec_model_name": "PP-OCRv6_small_rec",
         },
@@ -62,6 +78,25 @@ def load_engine():
         },
         {
             **base_kwargs,
+        },
+        {
+            "lang": "ch",
+            "engine": "onnxruntime",
+            "use_angle_cls": False,
+            "text_detection_model_name": "PP-OCRv6_small_det",
+            "text_recognition_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            "lang": "ch",
+            "engine": "onnxruntime",
+            "use_angle_cls": False,
+            "det_model_name": "PP-OCRv6_small_det",
+            "rec_model_name": "PP-OCRv6_small_rec",
+        },
+        {
+            "lang": "ch",
+            "engine": "onnxruntime",
+            "use_angle_cls": False,
         },
         {
             "lang": "ch",
