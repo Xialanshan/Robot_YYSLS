@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -52,6 +53,8 @@ type OCRProcessor struct {
 	WorkDir    string
 	TTL        time.Duration
 	AfterFunc  func(time.Duration, func()) *time.Timer
+	LibreOfficeBinary string
+	RecalculateWorkbook func(context.Context, string) error
 }
 
 func (p *OCRProcessor) Handle(ctx context.Context, groupID, userID, text string, images []ImageReference, now time.Time) (OCRHandleResult, error) {
@@ -135,7 +138,7 @@ func (p *OCRProcessor) handleCalculate(ctx context.Context, groupID, userID, tex
 	lines := make([]string, 0, len(styles)+4)
 	lines = append(lines, "已完成 OCR 计算：")
 	for _, cfg := range styles {
-		path, value, err := p.generateWorkbook(runDir, cfg, attrs, userID, now)
+		path, value, err := p.generateWorkbook(ctx, runDir, cfg, attrs, now)
 		if err != nil {
 			lines = append(lines, cfg.Name+"：计算失败（"+err.Error()+"）")
 			continue
@@ -248,7 +251,7 @@ func (p *OCRProcessor) downloadImage(ctx context.Context, image ImageReference) 
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs attrparse.ParsedAttributes, userLabel string, now time.Time) (string, string, error) {
+func (p *OCRProcessor) generateWorkbook(ctx context.Context, runDir string, cfg style.Config, attrs attrparse.ParsedAttributes, now time.Time) (string, string, error) {
 	initialPath := filepath.Join(runDir, filepath.Base(cfg.TemplatePath))
 	src, err := os.ReadFile(cfg.TemplatePath)
 	if err != nil {
@@ -262,7 +265,6 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	if err != nil {
 		return "", "", err
 	}
-	defer file.Close()
 
 	templateValues := buildTemplateValues(cfg, attrs)
 	for fieldName, value := range templateValues {
@@ -280,31 +282,51 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 	log.Printf("debug_ocr_generate_before_save style=%q src=%q dst=%q result_cell=%s!%s result_formula=%q template_values=%s", cfg.Name, cfg.TemplatePath, initialPath, cfg.Result.Sheet, cfg.Result.Cell, resultFormula, debugTemplateValues)
 	// #endregion debug-point
 	if err := p.prepareWorkbookForRecalc(file); err != nil {
+		_ = file.Close()
 		return "", "", err
 	}
 	if err := file.Save(); err != nil {
+		_ = file.Close()
+		return "", "", err
+	}
+	if err := file.Close(); err != nil {
 		return "", "", err
 	}
 	if err := os.Chtimes(initialPath, now, now); err != nil {
 		return "", "", err
 	}
-	result, err := file.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
-	resultCalcErr := err
+	if err := p.recalculateWorkbook(ctx, initialPath); err != nil {
+		return "", "", fmt.Errorf("使用 LibreOffice 重算副本失败，请确认服务器已安装 libreoffice。错误：%w", err)
+	}
+	reopened, err := excelize.OpenFile(initialPath)
 	if err != nil {
-		result, err = file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+		return "", "", err
+	}
+	defer reopened.Close()
+	result, err := reopened.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	if err != nil {
+		return "", "", err
+	}
+	result = strings.TrimSpace(result)
+	if result == "" {
+		result, err = reopened.CalcCellValue(cfg.Result.Sheet, cfg.Result.Cell)
 		if err != nil {
 			return "", "", err
 		}
+		result = strings.TrimSpace(result)
 	}
 	// #region debug-point
-	debugPersistedCells := summarizePersistedTemplateCells(file, cfg)
-	resultFormulaAfterSave, _ := file.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
-	resultRawAfterSave, _ := file.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
-	dependencySummary := summarizeFormulaDependencies(file, cfg.Result.Sheet, resultFormulaAfterSave)
-	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q result_raw=%q result_calc_err=%v result_formula=%q dependencies=%s persisted_cells=%s", cfg.Name, initialPath, strings.TrimSpace(result), resultRawAfterSave, resultCalcErr, resultFormulaAfterSave, dependencySummary, debugPersistedCells)
+	debugPersistedCells := summarizePersistedTemplateCells(reopened, cfg)
+	resultFormulaAfterSave, _ := reopened.GetCellFormula(cfg.Result.Sheet, cfg.Result.Cell)
+	resultRawAfterSave, _ := reopened.GetCellValue(cfg.Result.Sheet, cfg.Result.Cell)
+	dependencySummary := summarizeFormulaDependencies(reopened, cfg.Result.Sheet, resultFormulaAfterSave)
+	log.Printf("debug_ocr_generate_after_save style=%q dst=%q result=%q result_raw=%q result_formula=%q dependencies=%s persisted_cells=%s", cfg.Name, initialPath, result, resultRawAfterSave, resultFormulaAfterSave, dependencySummary, debugPersistedCells)
 	// #endregion debug-point
-	finalPath := generatedTemplatePath(runDir, cfg.Name, strings.TrimSpace(result), userLabel, cfg.TemplatePath)
+	finalPath := generatedTemplatePath(runDir, cfg.Name, result, cfg.TemplatePath)
 	if finalPath != initialPath {
+		if err := reopened.Close(); err != nil {
+			return "", "", err
+		}
 		if err := os.Rename(initialPath, finalPath); err != nil {
 			return "", "", err
 		}
@@ -323,7 +345,7 @@ func (p *OCRProcessor) generateWorkbook(runDir string, cfg style.Config, attrs a
 		log.Printf("debug_ocr_generate_reopen_read_failed style=%q path=%q err=%v", cfg.Name, finalPath, openErr)
 	}
 	// #endregion debug-point
-	return finalPath, strings.TrimSpace(result), nil
+	return finalPath, result, nil
 }
 
 func buildTemplateValues(cfg style.Config, attrs attrparse.ParsedAttributes) map[string]float64 {
@@ -490,17 +512,13 @@ func (p *OCRProcessor) prepareWorkbookForRecalc(file *excelize.File) error {
 	})
 }
 
-func generatedTemplatePath(runDir, styleName, graduationRate, userLabel, templatePath string) string {
+func generatedTemplatePath(runDir, styleName, graduationRate, templatePath string) string {
 	ext := filepath.Ext(templatePath)
 	if ext == "" {
 		ext = ".xlsx"
 	}
 	rateLabel := sanitizeRateForFileName(graduationRate)
-	userLabel = strings.TrimSpace(userLabel)
-	if userLabel == "" {
-		userLabel = "unknown-user"
-	}
-	base := sanitizeFileName(styleName + "-" + rateLabel + "-" + userLabel)
+	base := sanitizeFileName(styleName + "-" + rateLabel)
 	return filepath.Join(runDir, base+ext)
 }
 
@@ -641,4 +659,58 @@ func (p *OCRProcessor) afterFunc() func(time.Duration, func()) *time.Timer {
 		return p.AfterFunc
 	}
 	return time.AfterFunc
+}
+
+func (p *OCRProcessor) recalculateWorkbook(ctx context.Context, path string) error {
+	if p.RecalculateWorkbook != nil {
+		return p.RecalculateWorkbook(ctx, path)
+	}
+	binary := p.LibreOfficeBinary
+	if strings.TrimSpace(binary) == "" {
+		binary = "libreoffice"
+	}
+	outDir, err := os.MkdirTemp(filepath.Dir(path), "lo-recalc-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(outDir)
+
+	outName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + ".xlsx"
+	args := []string{
+		"--headless",
+		"--invisible",
+		"--nodefault",
+		"--nolockcheck",
+		"--norestore",
+		"--convert-to",
+		"xlsx",
+		"--outdir",
+		outDir,
+		path,
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("run %s failed: %w: %s", binary, err, strings.TrimSpace(string(output)))
+	}
+
+	convertedPath := filepath.Join(outDir, outName)
+	if _, err := os.Stat(convertedPath); err != nil {
+		return fmt.Errorf("recalculated workbook not found at %s: %w", convertedPath, err)
+	}
+	if err := replaceFile(convertedPath, path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func replaceFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o644)
 }
