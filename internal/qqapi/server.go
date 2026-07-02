@@ -177,6 +177,14 @@ func (s *WebhookServer) handleGroupAtMessage(payload Payload) error {
 	if strings.Contains(text, "OCR计算") {
 		return s.handleOCRAsync(event, memberID, text, startedAt)
 	}
+	if strings.Contains(text, "发我模板") {
+		if !s.tryStartOCREvent(event.EventID, s.currentTime()) {
+			// #region debug-point
+			log.Printf("debug_template_duplicate_event_ignored group=%q member=%q msg=%q event=%q", event.GroupOpenID, memberID, event.ID, event.EventID)
+			// #endregion debug-point
+			return nil
+		}
+	}
 	reply, templates, err := s.dispatchGroupText(ctx, event, memberID)
 	imageRefs := event.ImageReferences()
 	log.Printf("group_at_message group=%q member=%q msg=%q event=%q raw_content=%q images=%d image_summary=%s reply_empty=%t templates=%d err=%v", event.GroupOpenID, memberID, event.ID, event.EventID, event.Content, len(imageRefs), summarizeImageReferences(imageRefs), reply == "", len(templates), err)

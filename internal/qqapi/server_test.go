@@ -271,6 +271,33 @@ func TestWebhookServerOCRCommandDeduplicatesSameEvent(t *testing.T) {
 	t.Fatalf("OCR calls = %d replies = %+v", handler.calls.Load(), sender.repliesSnapshot())
 }
 
+func TestWebhookServerSendTemplateDeduplicatesSameEvent(t *testing.T) {
+	secret := "secret"
+	sender := &fakeReplySender{}
+	server := &WebhookServer{
+		BotSecret: secret,
+		OCR: fakeOCRHandler{result: OCRHandleResult{
+			Handled: true,
+			Reply:   "已为你发送填写后的模板副本：\n鸣金虹\n这些副本会在生成 1 小时后自动删除。",
+			Templates: []OutboundTemplate{
+				{Name: "鸣金虹", Path: "generated.xlsx"},
+			},
+		}},
+		Sender: sender,
+	}
+	body := groupAtPayload(t, "event-id", "msg-id", "group-openid", "member-openid", "<@bot> 发我模板 鸣金虹")
+
+	server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, body))
+	server.ServeHTTP(httptest.NewRecorder(), signedRequest(t, secret, body))
+
+	if len(sender.templates) != 1 {
+		t.Fatalf("template send attempts = %+v, want 1", sender.templates)
+	}
+	if len(sender.repliesSnapshot()) != 1 {
+		t.Fatalf("replies = %+v, want 1", sender.repliesSnapshot())
+	}
+}
+
 func TestGroupAtMessageImageReferences(t *testing.T) {
 	event := GroupAtMessageData{
 		Attachments: []MessageMedia{

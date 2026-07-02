@@ -286,7 +286,7 @@ func buildTemplateValues(cfg style.Config, attrs attrparse.ParsedAttributes) map
 			return
 		}
 		if value, ok := attrs[attrName]; ok {
-			values[fieldName] = value
+			values[fieldName] = normalizeTemplateValue(fieldName, value)
 		}
 	}
 
@@ -315,11 +315,28 @@ func buildTemplateValues(cfg style.Config, attrs attrparse.ParsedAttributes) map
 	if weaponBonus, ok := attrs[attrparse.FieldSpecifiedWeaponBonus]; ok {
 		for name := range cfg.Fields {
 			if isWeaponBonusField(name) {
-				values[name] = weaponBonus
+				values[name] = normalizeTemplateValue(name, weaponBonus)
 			}
 		}
 	}
 	return values
+}
+
+func normalizeTemplateValue(fieldName string, value float64) float64 {
+	if isPercentageTemplateField(fieldName) {
+		return value / 100
+	}
+	return value
+}
+
+func isPercentageTemplateField(name string) bool {
+	switch name {
+	case "精准率", "会心率", "会意率", "直接会心率", "直接会意率",
+		"会心伤害加成", "会意伤害加成", "全武增", "首领增", "单体奇术增", "群体奇术增":
+		return true
+	default:
+		return isWeaponBonusField(name)
+	}
 }
 
 func isWeaponBonusField(name string) bool {
